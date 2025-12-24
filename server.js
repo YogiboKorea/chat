@@ -489,11 +489,7 @@ app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI
   res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");res.setHeader("Content-Disposition","attachment; filename=log.xlsx");
   await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
 
-const upload = multer({storage:multer.diskStorage({destination:(r,f,c)=>c(null,path.join(__dirname,'uploads')),filename:(r,f,c)=>c(null,`${Date.now()}_${f.originalname}`)}),limits:{fileSize:5*1024*1024}});
-const transporter = nodemailer.createTransport({host:SMTP_HOST,port:Number(SMTP_PORT),secure:SMTP_SECURE==='true',auth:{user:SMTP_USER,pass:SMTP_PASS}});
-app.post('/send-email', upload.single('attachment'), async(req,res)=>{ try{
-  await transporter.sendMail({from:req.body.companyName,to:'contact@yogico.kr',replyTo:req.body.companyEmail,subject:`Contact: ${req.body.companyName}`,text:req.body.message,attachments:req.file?[{path:req.file.path}]:[]});
-  res.json({success:true});}catch(e){res.status(500).json({success:false,error:e.message})} });
+
 
 app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
   if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
