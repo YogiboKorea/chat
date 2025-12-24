@@ -1,0 +1,32 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "nodemon server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "- **목표**: 기존 FAQ 데이터를 ChatGPT로 학습시켜 사용자가 채팅을 통해 질문하면 적절한 답변 제공\r - **관리자 페이지**: FAQ 데이터를 관리하고 업데이트 가능\r - **기술 스택**: \r   - 백엔드: Node.js (클라우드타입)\r   - 프론트엔드: React Native, Bootstrap\r - **주요 기능**: 실시간 채팅 UI, ChatGPT 연동 API, FAQ 데이터 CRUD",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "basic-ftp": "^5.0.5",
+    "body-parser": "^1.20.3",
+    "compression": "^1.8.0",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.19",
+    "dotenv": "^16.5.0",
+    "env": "^0.0.2",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "fast-levenshtein": "^3.0.0",
+    "mongodb": "^7.0.0",
+    "multer": "^2.0.2",
+    "natural": "^8.0.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.3",
+    "nodemon": "^3.1.9",
+    "openai": "^4.85.3"
+  },
+  "devDependencies": {}
+}
