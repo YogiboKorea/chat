@@ -8,11 +8,12 @@ const axios = require("axios");
 const { MongoClient, ObjectId } = require("mongodb");
 const levenshtein = require("fast-levenshtein");
 const ExcelJS = require("exceljs");
-require("dotenv").config();
-const nodemailer = require('nodemailer');
 const multer = require('multer');
 const ftp = require('basic-ftp');
 const dayjs = require('dayjs');
+
+// ✅ [중요] .env 파일 경로 명시적 지정 (서버 실행 오류 방지)
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 // ✅ 정적 FAQ 데이터 불러오기
 const staticFaqList = require("./faq");
@@ -22,7 +23,8 @@ const {
   ACCESS_TOKEN, REFRESH_TOKEN, CAFE24_CLIENT_ID, CAFE24_CLIENT_SECRET,
   DB_NAME, MONGODB_URI, CAFE24_MALLID, OPEN_URL, API_KEY,
   FINETUNED_MODEL = "gpt-3.5-turbo", CAFE24_API_VERSION = "2024-06-01",
-  PORT = 3000
+  PORT = 5000, FTP_PUBLIC_BASE,
+  FTP_HOST, FTP_USER, FTP_PASS // FTP 설정 추가
 } = process.env;
 
 let accessToken = ACCESS_TOKEN;
@@ -148,7 +150,6 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [수정] 검색 로직 완화 및 로그 추가
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length) return [];
@@ -173,7 +174,6 @@ function findRelevantContent(msg) {
     return { ...item, score };
   });
 
-  // ✅ 기준 점수 완화 (10 -> 5) : 키워드가 하나라도(특히 질문에) 포함되면 가져오도록 함
   const results = scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
   
   console.log(`📊 검색 결과: ${results.length}개 발견`);
@@ -311,7 +311,7 @@ async function findAnswer(userInput, memberId) {
     return { text: `정확한 조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
   }
 
-  // 6. 일반 배송/주문 조회 (조건 강화)
+  // 6. 일반 배송/주문 조회
   const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && 
                      (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
   const isFAQ = normalized.includes("비용") || normalized.includes("비") || normalized.includes("주소") || normalized.includes("변경");
@@ -344,7 +344,6 @@ async function findAnswer(userInput, memberId) {
   }
 
   // [JSON 하드코딩 로직들]
-
   // (1) 커버링
   if (pendingCoveringContext) {
     const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드"];
@@ -469,7 +468,7 @@ async function saveConversationLog(mid, uMsg, bRes) {
   } finally { await client.close(); }
 }
 
-// ========== [기타 API들 (기존 유지)] ==========
+// ========== [기타 API들] ==========
 app.get("/postIt", async (req, res) => {
   const p = parseInt(req.query.page)||1; const l=300;
   try { const c=new MongoClient(MONGODB_URI); await c.connect();
@@ -489,7 +488,8 @@ app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI
   res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");res.setHeader("Content-Disposition","attachment; filename=log.xlsx");
   await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
 
-
+// ✅ 이미지 업로드 (FTP) - 기존 유지
+const upload = multer({storage:multer.diskStorage({destination:(r,f,c)=>c(null,path.join(__dirname,'uploads')),filename:(r,f,c)=>c(null,`${Date.now()}_${f.originalname}`)}),limits:{fileSize:5*1024*1024}});
 
 app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
   if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
@@ -508,12 +508,11 @@ app.get('/api/:_any/eventTemple/:id',async(req,res)=>{try{const d=await runDb(db
 app.put('/api/:_any/eventTemple/:id',async(req,res)=>{try{const s={...req.body,updatedAt:new Date()};if(s.content?.blocks)s.content.blocks=nb(s.content.blocks);delete s._id;await runDb(db=>db.collection(EC).updateOne({_id:new ObjectId(req.params.id)},{$set:s}));res.json({success:true})}catch(e){res.status(500).json({error:'Err'})}});
 app.delete('/api/:_any/eventTemple/:id',async(req,res)=>{try{await runDb(db=>db.collection(EC).deleteOne({_id:new ObjectId(req.params.id)}));res.json({success:true})}catch(e){res.status(500).json({error:'Err'})}});
 
-
-
 // ========== [서버 실행] ==========
 (async function initialize() {
   try {
     console.log("🟡 서버 시작...");
+    console.log("✅ 몽고DB URI 확인:", MONGODB_URI ? "설정됨" : "❌ 없음");
     await getTokensFromDB();
     await updateSearchableData();
     app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
