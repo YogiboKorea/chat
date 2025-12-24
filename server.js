@@ -439,11 +439,17 @@ app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI
   await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
 
 // ========== [서버 실행] ==========
+// ========== [서버 실행] ==========
 (async function initialize() {
-  try {
-    console.log("🟡 서버 시작...");
-    await getTokensFromDB();
-    await updateSearchableData(); 
-    app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
-  } catch (err) { console.error("❌ 초기화 오류:", err.message); process.exit(1); }
-})();
+    try {
+      console.log("🟡 서버 시작...");
+      
+      await getTokensFromDB(); 
+      await updateSearchableData(); 
+      
+      app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
+    } catch (err) { 
+      console.error("❌ 초기화 오류:", err.message); 
+      process.exit(1); 
+    }
+  })();
