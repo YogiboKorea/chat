@@ -193,6 +193,58 @@ async function apiRequest(method, url, data = {}, params = {}) {
     }
 }
 
+// 주문 내역 조회 함수
+function checkShippingStatus() {
+    // 1. 비회원 체크
+    if (!window.lshMemberid) {
+        // 챗봇 UI에 메시지 출력: "주문번호를 알려주세요."
+        sendBotMessage("주문번호를 알려주시면 배송 상태를 조회해 드릴게요.");
+        return;
+    }
+
+    // 2. 회원인 경우: Cafe24 API로 최근 주문 내역 조회
+    // (참고: Cafe24 프론트 API 버전에 따라 문법이 다를 수 있으나, 일반적으로 아래와 같은 흐름입니다)
+    
+    // 예시: 최근 1개월(30일) 주문 내역 조회
+    var startDate = new Date();
+    startDate.setDate(startDate.getDate() - 30);
+    var startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 형식
+
+    CAFE24API.getOrderList({
+        member_id: window.lshMemberid, // 확보해둔 회원 ID 사용
+        start_date: startDateStr,
+        end_date: new Date().toISOString().split('T')[0],
+        limit: 5 // 최근 5건만
+    }, function(err, res) {
+        if (err) {
+            console.error(err);
+            sendBotMessage("주문 정보를 가져오는 중 오류가 발생했습니다.");
+        } else {
+            const orders = res.orders; // 반환된 주문 목록
+            
+            if (orders.length === 0) {
+                sendBotMessage("최근 주문 내역이 확인되지 않습니다.");
+            } else {
+                // 3. 조회된 주문 내역을 챗봇 메시지로 가공하여 출력
+                let msg = `${window.lshMemberid}님의 최근 배송 현황입니다.\n`;
+                
+                orders.forEach(order => {
+                    // 예: 20231224-00001 (상품준비중)
+                    msg += `- [${order.order_id}] : ${order.status_text}\n`;
+                });
+                
+                sendBotMessage(msg);
+            }
+        }
+    });
+}
+
+// (가상) 챗봇 메시지 출력 함수
+function sendBotMessage(text) {
+    // 실제 사용 중인 챗봇 UI에 텍스트를 뿌려주는 로직
+    console.log("챗봇 응답:", text);
+}
+
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
