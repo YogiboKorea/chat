@@ -284,7 +284,7 @@ async function findAnswer(userInput, memberId) {
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     
     // 3. 매장 안내
-    if (normalized.includes("오프라인 매장") || normalized.includes("매장안내")) return { text: `가까운 매장을 안내해 드립니다.<br><a href="/why.stroe.html" target="_blank">매장안내 바로가기</a>` };
+    if (normalized.includes("오프라인 매장") || normalized.includes("매장안내")) return { text: `가까운 매장을 안내해 드립니다.<br><a href="/why/stroe.html" target="_blank">매장안내 바로가기</a>` };
     
     // 4. 장바구니/회원정보
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
@@ -317,7 +317,7 @@ async function findAnswer(userInput, memberId) {
               const ship = await getShipmentDetail(t.order_id);
               if (ship) {
                  let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
-                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
+                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중(또는 완료) 상태입니다.\n📄 송장번호: ${trackingDisplay}` };
               }
               return { text: "최근 주문 확인 중입니다." };
             }
@@ -438,7 +438,6 @@ app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI
   res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");res.setHeader("Content-Disposition","attachment; filename=log.xlsx");
   await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
 
-// ========== [서버 실행] ==========
 // ========== [서버 실행] ==========
 (async function initialize() {
     try {
