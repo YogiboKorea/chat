@@ -15,7 +15,7 @@ const dayjs = require('dayjs');
 // ✅ [중요] .env 파일 경로 명시적 지정
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-// ✅ 정적 FAQ 데이터 (백업/기본 검색용)
+// ✅ 정적 FAQ 데이터 불러오기
 const staticFaqList = require("./faq");
 
 // ========== [환경 설정] ==========
@@ -161,17 +161,26 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [유틸 함수] ==========
+// ========== [★ 수정됨] 유틸 함수: 텍스트 포맷팅 (링크 변환 강화)
 function formatResponseText(text) {
   if (!text) return "";
+  
+  // 1. 마침표 뒤 줄바꿈
   let formatted = text.replace(/([가-힣]+)[.]\s/g, '$1.\n'); 
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  formatted = formatted.replace(urlRegex, function(url) {
-    let cleanUrl = url.replace(/[.,]$/, ''); 
-    return `<a href="${cleanUrl}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${cleanUrl}</a>`;
+
+  // 2. [★추가] 마크다운 링크 변환: [텍스트](주소) -> <a>태그
+  formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
+      return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
   });
+
+  // 3. 일반 URL 텍스트 변환 (이미 <a> 태그 안에 있는 것 제외)
+  formatted = formatted.replace(/(?<!href="|">)(https?:\/\/[^\s<)]+)/g, (url) => {
+      return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${url}</a>`;
+  });
+
   return formatted;
 }
+
 function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없나요/g, "없어요").trim(); }
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
@@ -213,7 +222,7 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [★ 수정됨: findAnswer (규칙 로직 복구)] ==========
+// ========== [하드코딩 규칙 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
@@ -260,7 +269,7 @@ async function findAnswer(userInput, memberId) {
         return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
 
-    // 4. [★복구됨] JSON 하드코딩 - 커버링 영상
+    // 4. JSON 하드코딩 - 커버링 영상
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -283,7 +292,7 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 5. [★복구됨] JSON 하드코딩 - 사이즈 정보
+    // 5. JSON 하드코딩 - 사이즈 정보
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "허기보"];
@@ -295,9 +304,9 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 6. [★복구됨] JSON 하드코딩 - 비즈 안내
+    // 6. JSON 하드코딩 - 비즈 안내
     if (companyData.biz && (normalized.includes("비즈") || normalized.includes("충전재"))) {
-        // ... (필요 시 기존 비즈 로직 추가 가능, 현재는 GPT가 잘 대답하므로 생략하거나 단순화 가능)
+        // ... (필요 시 기존 비즈 로직 추가 가능)
     }
     
     return null;
@@ -332,7 +341,7 @@ app.post("/chat", async (req, res) => {
 
     const docs = findRelevantContent(message);
     let gptAnswer = await getGPT3TurboResponse(message, docs);
-    gptAnswer = formatResponseText(gptAnswer);
+    gptAnswer = formatResponseText(gptAnswer); // ★ 여기서 링크 변환 실행
 
     // [구조대] GPT가 놓친 영상/이미지 강제 복구 (RAG 데이터 기반)
     if (docs.length > 0) {
