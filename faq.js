@@ -91,4 +91,228 @@ module.exports = [
     { c: "homepage", q: "회원 가입 시 어떠한 혜택이 있나요?", a: "신규 쿠폰, 프로모션 쿠폰, 적립금 등." },
     { c: "homepage", q: "회원 가입은 어떻게 하나요?", a: "간편가입(카카오/네이버) 또는 일반가입 가능." },
     { c: "homepage", q: "고객센터 전화번호 알고 싶어", a: "02-557-0920" },
+    { 
+      c: "covering", 
+      q: "더블 커버링 방법을 알고 싶어", 
+      a: "더블 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/Do1dMit84rc' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "맥스 커버링 방법을 알고 싶어", 
+      a: "맥스 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/c292cYyF-qw' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "프라임 커버링 방법을 알고 싶어", 
+      a: "프라임 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/UYPiZgk8sfA' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "슬림 커버링 방법을 알고 싶어", 
+      a: "슬림 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/UYPiZgk8sfA' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "미디 커버링 방법을 알고 싶어", 
+      a: "미디 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/UYPiZgk8sfA' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "미니 커버링 방법을 알고 싶어", 
+      a: "미니 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/aCPpFOPpVGc' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "팟 커버링 방법을 알고 싶어", 
+      a: "팟 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/jP8lQIu_MmM' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "드롭 커버링 방법을 알고 싶어", 
+      a: "드롭 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/jP8lQIu_MmM' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "라운저 커버링 방법을 알고 싶어", 
+      a: "라운저 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/cjwawjXrXYA' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "롤 미디 커버링 방법을 알고 싶어", 
+      a: "롤 미디 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/AfhZDVhjbjE' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "롤 맥스 커버링 방법을 알고 싶어", 
+      a: "롤 맥스 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/AfhZDVhjbjE' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "카터필러 롤 커버링 방법을 알고 싶어", 
+      a: "카터필러 롤 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/AfhZDVhjbjE' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "피라미드 커버링 방법을 알고 싶어", 
+      a: "피라미드 커버링 방법은 아래 영상을 참고해주세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/HduyOX0YCqk' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "안전 지퍼 사용 방법은 어떻게 되나요?", 
+      a: "Yogibo는 충전재 알갱이 흡입에 의한 질식사고 방지를 위해서 지퍼 손잡이가 없는 안전지퍼를 사용하고 있어요.<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/5Z9XLr8_Y1k' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+    { 
+      c: "covering", 
+      q: "리필 비즈 쉽게 충전하는 방법을 알고 싶어요", 
+      a: "Yogibo 리필 비즈 충전 방법을 영상으로 확인해보세요!<br><br><iframe width='100%' height='200' src='https://www.youtube.com/embed/J6D97P35kjs' frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture' allowfullscreen></iframe>" 
+    },
+  
+    // [Category: size (사이즈 정보)]
+    { 
+      c: "size", 
+      q: "맥스 사이즈 또는 크기", 
+      a: "사이즈: W70cm D45cm H170cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST101_MAX/11_FUBST101_MAX_SPEC.jpg' style='max-width:100%; height:auto;' alt='맥스 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "더블 사이즈 또는 크기", 
+      a: "사이즈: W140cm D45cm H170cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/DOUBLE/15_Double_SPEC.jpg' style='max-width:100%; height:auto;' alt='더블 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "프라임 사이즈 또는 크기", 
+      a: "사이즈: W65cm D45cm H145cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST102_PRIME/11_FUBST102_PRIME_SPEC.jpg' style='max-width:100%; height:auto;' alt='프라임 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "미니 사이즈 또는 크기", 
+      a: "사이즈: W70cm D45cm H90cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST105_MINI/11_FUBST105_MINI_SPEC.jpg' style='max-width:100%; height:auto;' alt='미니 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "드롭 사이즈 또는 크기", 
+      a: "사이즈: W85cm D85cm H75cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST107_DROP/11_FUBST107_DROP_SPEC.jpg' style='max-width:100%; height:auto;' alt='드롭 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "라운저 사이즈 또는 크기", 
+      a: "사이즈: W65cm D80cm H60cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST108_LOUNGER/11_FUBST108_LOUNGER_SPEC.jpg' style='max-width:100%; height:auto;' alt='라운저 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "슬림 사이즈 또는 크기", 
+      a: "사이즈: W65cm D45cm H130cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST103_SLIM/11_FUBST103_SLIM_SPEC.jpg' style='max-width:100%; height:auto;' alt='슬림 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "팟 사이즈 또는 크기", 
+      a: "사이즈: W85cm D85cm H95cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST106_POD/11_FUBST106_POD_SPEC.jpg' style='max-width:100%; height:auto;' alt='팟 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "피라미드 사이즈 또는 크기", 
+      a: "사이즈: W85cm D85cm H95cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/FUBST109_PYRAMID/11_FUBST109_PYRAMID_SPEC.jpg' style='max-width:100%; height:auto;' alt='피라미드 사이즈 스펙'>" 
+    },
+    { 
+      c: "size", 
+      q: "허기보 사이즈 또는 크기", 
+      a: "사이즈: W60cm D50cm H110cm<br><br><img src='https://yogibo.kr//web/img/product/2023_detailpage/standard/sofa/HUGIBO/12_hugibo_SPEC.jpg' style='max-width:100%; height:auto;' alt='허기보 사이즈 스펙'>" 
+    },
+    
+    // [Category: product (제품 정보 추가)]
+    { 
+      c: "product", 
+      q: "소파, 바디필로우는 어떤 것들로 만들어졌나요?", 
+      a: "Yogibo 소파와 바디필로우는 다음 구성품들로 만들어집니다.<br>1. 커버(외피커버): 제품 전체를 보호<br>2. 이너(내피커버): 충전재를 감싸고 있음<br>3. 비즈(충전재): 이너 안에 들어가는 알갱이<br><br>바쁜 일상 속, 기분 좋은 휴식을 Yogibo와 함께 하시길 바랍니다." 
+    },
+    {
+      c: "product",
+      q: "바디필로우의 종류나 스펙에 대해 알고 싶어",
+      a: "해당 링크를 통해 확인하실 수 있습니다.<br><a href='https://yogibo.kr/product/list.html?cate_no=876' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>[바디필로우 스펙 확인하기]</a>"
+    },
+    {
+      c: "product",
+      q: "소파의 종류나 스펙에 대해 알고 싶어",
+      a: "해당 링크를 통해 확인하실 수 있습니다.<br><a href='https://yogibo.kr/product/list.html?cate_no=858' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>[소파 스팩 확인하기]</a>"
+    },
+    {
+      c: "product",
+      q: "물류센터 정보",
+      a: "물류센터 주소: 경기도 용인시 처인구 모현읍 곡현로 707-1 (매산리 138-16)<br>자세한 내용은 고객센터를 통해 확인 부탁드립니다."
+    },
+  
+    // [Category: homepage (홈페이지/회원 관련 추가)]
+    {
+      c: "homepage",
+      q: "회원 탈퇴 방법 알려줘",
+      a: "<a href='https://yogibo.kr/myshop/index.html' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>회원정보</a> 클릭 후 하단에 위치한 '회원 탈퇴' 버튼 클릭을 통해 가능합니다."
+    },
+    {
+      c: "homepage",
+      q: "환불 방법을 알려줘",
+      a: "카드 환불: 카드사 사정으로 3~5 영업일 소요될 수 있습니다. 7일 후에도 환불되지 않으면 고객센터로 문의해주세요.<br>무통장 입금: 환불 접수일로부터 3 영업일 이내 입금됩니다."
+    },
+    {
+      c: "homepage",
+      q: "적립금 사용 기간을 알고 싶어",
+      a: "적립금은 지급일로부터 1년 간 사용 가능하며, 만료일이 가까운 적립금부터 사용/소멸됩니다.<br><a href='https://yogibo.kr/myshop/index.html' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>마이페이지</a> > 쿠폰조회를 통해 확인 가능합니다."
+    },
+    {
+      c: "homepage",
+      q: "쿠폰은 언제까지 사용할 수 있나요?",
+      a: "쿠폰별로 유효기간이 다릅니다.<br><a href='https://yogibo.kr/myshop/index.html' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>마이페이지</a> > 쿠폰조회를 통해 확인 가능합니다."
+    },
+    {
+      c: "homepage",
+      q: "쿠폰은 최대 몇 개까지 사용 가능한가요?",
+      a: "주문 시 쿠폰은 최대 2개(주문서 쿠폰 + 상품 쿠폰)까지 중복 사용 가능합니다.<br>조건이 맞지 않는 쿠폰은 노출되지 않습니다."
+    },
+    {
+      c: "homepage",
+      q: "쿠폰을 사용하려면 어떻게 해야 하나요?",
+      a: "(PC/MO) 주문서 > 배송정보 > 쿠폰적용<br>배송정보 입력 후 [쿠폰적용] 버튼을 클릭하여 사용 가능한 쿠폰을 선택해주세요."
+    },
+    {
+      c: "homepage",
+      q: "회원정보 변경 방법",
+      a: "<a href='https://yogibo.kr/myshop/index.html' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>[마이페이지] > [회원정보]</a>를 통해 수정 가능합니다."
+    },
+    {
+      c: "homepage",
+      q: "아이디 비밀번호 찾기",
+      a: "<a href='https://yogibo.kr/member/login.html' target='_blank' style='color:#58b5ca; font-weight:bold; text-decoration:underline;'>로그인 페이지</a>의 '아이디/비밀번호 찾기' 기능을 이용해주세요.<br>비밀번호는 확인이 불가능하며 변경만 가능합니다. (간편회원은 변경 불가)"
+    },
+    {
+      c: "homepage",
+      q: "회원 등급을 알고 싶어요",
+      a: "Yogibo 회원등급은 최근 12개월 실 결제금액 기준입니다.<br>1) MATE: 회원가입 시<br>2) MINI: 100만원 이상<br>3) MIDI: 150만원 이상<br>4) MAX: 200만원 이상"
+    },
+  
+    // [Category: washing (세탁 방법 추가)]
+    {
+      c: "laundry",
+      q: "요기보 세탁 방법 (Yogibo)",
+      a: "1) 커버만 분리 후 세탁망에 넣어 찬물 단독 세탁<br>2) 그늘에서 자연 건조하거나 건조기 저온(약) 모드 사용"
+    },
+    {
+      c: "laundry",
+      q: "줄라 세탁 방법 (Zoola)",
+      a: "1) 커버만 분리 후 세탁망에 넣어 찬물 단독 세탁<br>2) 세탁 후 안감(코팅막)이 바깥으로 가도록 뒤집어 물기 제거 후 그늘 건조 (건조기 사용 시 코팅 손상 주의)"
+    },
+    {
+      c: "laundry",
+      q: "럭스 세탁 방법 (Luxe)",
+      a: "1) 케어라벨 확인 필수<br>2) 커버만 분리 후 세탁망에 넣어 세탁<br>3) 그늘 자연 건조 또는 건조기 사용"
+    },
+    {
+      c: "laundry",
+      q: "모듀 세탁 방법 (Modju)",
+      a: "1) 케어라벨 확인 필수<br>2) 커버만 분리 후 세탁망에 넣어 세탁<br>3) 그늘 자연 건조 또는 건조기 사용"
+    },
+    {
+      c: "laundry",
+      q: "메이트 세탁 방법 (Mate)",
+      a: "1) 커버만 분리 후 세탁망에 넣어 세탁<br>2) 그늘 자연 건조 또는 건조기 사용"
+    }
+    
   ];
