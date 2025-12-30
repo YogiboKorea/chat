@@ -161,14 +161,16 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [★ 수정됨] 유틸 함수: 텍스트 포맷팅 (링크 변환 강화)
+// ========== [★ 수정됨] 유틸 함수: 텍스트 포맷팅 (줄바꿈 최적화 + 링크 변환)
 function formatResponseText(text) {
   if (!text) return "";
   
-  // 1. 마침표 뒤 줄바꿈
-  let formatted = text.replace(/([가-힣]+)[.]\s/g, '$1.\n'); 
+  let formatted = text;
 
-  // 2. [★추가] 마크다운 링크 변환: [텍스트](주소) -> <a>태그
+  // 1. [삭제됨] 마침표 뒤 강제 줄바꿈 코드를 제거했습니다.
+  // formatted = text.replace(/([가-힣]+)[.]\s/g, '$1.\n');  <-- 이 줄이 문제였음!
+
+  // 2. 마크다운 링크 변환: [텍스트](주소) -> <a>태그
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
   });
@@ -306,7 +308,7 @@ async function findAnswer(userInput, memberId) {
 
     // 6. JSON 하드코딩 - 비즈 안내
     if (companyData.biz && (normalized.includes("비즈") || normalized.includes("충전재"))) {
-        // ... (필요 시 기존 비즈 로직 추가 가능)
+        // ...
     }
     
     return null;
@@ -341,9 +343,9 @@ app.post("/chat", async (req, res) => {
 
     const docs = findRelevantContent(message);
     let gptAnswer = await getGPT3TurboResponse(message, docs);
-    gptAnswer = formatResponseText(gptAnswer); // ★ 여기서 링크 변환 실행
+    gptAnswer = formatResponseText(gptAnswer);
 
-    // [구조대] GPT가 놓친 영상/이미지 강제 복구 (RAG 데이터 기반)
+    // [구조대] GPT가 놓친 영상/이미지 강제 복구
     if (docs.length > 0) {
         const bestDoc = docs[0];
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
