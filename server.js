@@ -46,18 +46,19 @@ let currentSystemPrompt = `
 1. 역할: 요기보(Yogibo)의 친절한 상담원입니다.
 2. 태도: 공감하고 따뜻한 말투("~해요")를 사용하세요.
 3. 원칙: [참고 정보]에 없는 내용은 지어내지 말고 모른다고 하세요.
+4. 방향 : 요기보에 관련된 자료가 아닐경우 CS연결로 진행하세요 또는 정확한 답변을 요구하세요.
 `;
 
 // ========== [상수: HTML 템플릿] ==========
 const COUNSELOR_LINKS_HTML = `
-<div style="margin-top: 15px;">
+<div style="margin-top: 5px;">
   📮 <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" style="color:#3b1e1e; font-weight:bold; text-decoration:underline; cursor:pointer;">카카오플친 연결하기 (팝업)</a><br>
   📮 <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" style="color:#03c75a; font-weight:bold; text-decoration:underline; cursor:pointer;">네이버톡톡 연결하기 (팝업)</a>
 </div>
 `;
 
 const FALLBACK_MESSAGE_HTML = `
-<div style="margin-top: 20px; border-top: 1px dashed #ddd; padding-top: 10px;">
+<div style="margin-top: 5px; border-top: 1px dashed #ddd; padding-top: 10px;">
   <span style="font-size:13px; color:#888;">원하시는 답변을 찾지 못하셨나요?</span>
   ${COUNSELOR_LINKS_HTML}
 </div>
