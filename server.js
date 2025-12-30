@@ -108,20 +108,18 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-// ✅ [RAG 로직 1] DB에서 데이터 갱신 (FAQ + 시스템 프롬프트)
+// ✅ [RAG 로직 1] DB에서 데이터 갱신
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
     await client.connect();
     const db = client.db(DB_NAME);
 
-    // 1. FAQ 데이터 로드
     const notes = await db.collection("postItNotes").find({}).toArray();
     const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
     allSearchableData = [...staticFaqList, ...dynamic];
     console.log(`✅ 검색 데이터 갱신 완료: 총 ${allSearchableData.length}개 로드됨`);
 
-    // 2. 시스템 프롬프트 로드
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) {
         currentSystemPrompt = prompts[0].content; 
@@ -182,7 +180,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [★ 복구된 Cafe24 배송/API 관련 함수] ==========
+// ========== [Cafe24 배송/API 관련 함수] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -191,58 +189,6 @@ async function apiRequest(method, url, data = {}, params = {}) {
       if (error.response?.status === 401) { await refreshAccessToken(); return apiRequest(method, url, data, params); }
       throw error;
     }
-}
-
-// 주문 내역 조회 함수
-function checkShippingStatus() {
-    // 1. 비회원 체크
-    if (!window.lshMemberid) {
-        // 챗봇 UI에 메시지 출력: "주문번호를 알려주세요."
-        sendBotMessage("주문번호를 알려주시면 배송 상태를 조회해 드릴게요.");
-        return;
-    }
-
-    // 2. 회원인 경우: Cafe24 API로 최근 주문 내역 조회
-    // (참고: Cafe24 프론트 API 버전에 따라 문법이 다를 수 있으나, 일반적으로 아래와 같은 흐름입니다)
-    
-    // 예시: 최근 1개월(30일) 주문 내역 조회
-    var startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30);
-    var startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 형식
-
-    CAFE24API.getOrderList({
-        member_id: window.lshMemberid, // 확보해둔 회원 ID 사용
-        start_date: startDateStr,
-        end_date: new Date().toISOString().split('T')[0],
-        limit: 5 // 최근 5건만
-    }, function(err, res) {
-        if (err) {
-            console.error(err);
-            sendBotMessage("주문 정보를 가져오는 중 오류가 발생했습니다.");
-        } else {
-            const orders = res.orders; // 반환된 주문 목록
-            
-            if (orders.length === 0) {
-                sendBotMessage("최근 주문 내역이 확인되지 않습니다.");
-            } else {
-                // 3. 조회된 주문 내역을 챗봇 메시지로 가공하여 출력
-                let msg = `${window.lshMemberid}님의 최근 배송 현황입니다.\n`;
-                
-                orders.forEach(order => {
-                    // 예: 20231224-00001 (상품준비중)
-                    msg += `- [${order.order_id}] : ${order.status_text}\n`;
-                });
-                
-                sendBotMessage(msg);
-            }
-        }
-    });
-}
-
-// (가상) 챗봇 메시지 출력 함수
-function sendBotMessage(text) {
-    // 실제 사용 중인 챗봇 UI에 텍스트를 뿌려주는 로직
-    console.log("챗봇 응답:", text);
 }
 
 async function getOrderShippingInfo(id) {
@@ -273,7 +219,7 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [하드코딩 규칙 답변 로직] ==========
+// ========== [★ 수정됨: findAnswer] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
@@ -281,16 +227,15 @@ async function findAnswer(userInput, memberId) {
     if (normalized.includes("상담사 연결") || normalized.includes("상담원 연결")) return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     
     // 2. 고객센터 안내
-    if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:50~14:00)" };
+    if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     
-    // 3. 매장 안내
-    if (normalized.includes("오프라인 매장") || normalized.includes("매장안내")) return { text: `가까운 매장을 안내해 드립니다.<br><a href="/why/stroe.html" target="_blank">매장안내 바로가기</a>` };
+    // ❌ [삭제됨] 매장 안내 하드코딩 (이제 DB 검색으로 넘어감)
     
-    // 4. 장바구니/회원정보
+    // 3. 장바구니/회원정보
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 5. 주문번호로 배송 조회
+    // 4. 주문번호로 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -306,7 +251,7 @@ async function findAnswer(userInput, memberId) {
         return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
 
-    // 6. 일반 배송/주문 조회
+    // 5. 일반 배송/주문 조회
     const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
     if (isTracking && !containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
@@ -317,7 +262,7 @@ async function findAnswer(userInput, memberId) {
               const ship = await getShipmentDetail(t.order_id);
               if (ship) {
                  let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
-                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중(또는 완료) 상태입니다.\n📄 송장번호: ${trackingDisplay}` };
+                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
               }
               return { text: "최근 주문 확인 중입니다." };
             }
@@ -327,7 +272,7 @@ async function findAnswer(userInput, memberId) {
         return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
     
-    // 7. 커버링/사이즈 등 JSON 데이터
+    // 6. JSON 데이터 (사이즈 등)
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드"];
@@ -342,11 +287,10 @@ async function findAnswer(userInput, memberId) {
     return null;
 }
 
-// ========== [★ 신규 API: LLM 프롬프트 교육 (chat_send)] ==========
+// ========== [LLM 프롬프트 교육 (chat_send)] ==========
 app.post("/chat_send", async (req, res) => {
     const { role, content } = req.body;
     const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
-    
     const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect();
@@ -372,7 +316,7 @@ app.post("/chat", async (req, res) => {
        return res.json(ruleAnswer);
     }
 
-    // 2. RAG 검색
+    // 2. RAG 검색 (DB 데이터)
     const docs = findRelevantContent(message);
     
     // 3. GPT 질문
@@ -415,14 +359,13 @@ app.post("/postIt", async(req,res)=>{
     try{const c=new MongoClient(MONGODB_URI);await c.connect();
     await c.db(DB_NAME).collection("postItNotes").insertOne({...req.body,createdAt:new Date()});
     await c.close();
-    await updateSearchableData(); // ★ 검색 갱신
+    await updateSearchableData(); 
     res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} 
 });
 
 app.put("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").updateOne({_id:new ObjectId(req.params.id)},{$set:{...req.body,updatedAt:new Date()}});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 app.delete("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").deleteOne({_id:new ObjectId(req.params.id)});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 
-// ... (이미지 업로드, 엑셀 다운로드 등 기존 API)
 const upload = multer({storage:multer.diskStorage({destination:(r,f,c)=>c(null,path.join(__dirname,'uploads')),filename:(r,f,c)=>c(null,`${Date.now()}_${f.originalname}`)}),limits:{fileSize:5*1024*1024}});
 app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
   if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
@@ -440,15 +383,10 @@ app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI
 
 // ========== [서버 실행] ==========
 (async function initialize() {
-    try {
-      console.log("🟡 서버 시작...");
-      
-      await getTokensFromDB(); 
-      await updateSearchableData(); 
-      
-      app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
-    } catch (err) { 
-      console.error("❌ 초기화 오류:", err.message); 
-      process.exit(1); 
-    }
-  })();
+  try {
+    console.log("🟡 서버 시작...");
+    await getTokensFromDB();
+    await updateSearchableData(); 
+    app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
+  } catch (err) { console.error("❌ 초기화 오류:", err.message); process.exit(1); }
+})();
