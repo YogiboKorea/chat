@@ -38,14 +38,13 @@ app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ========== [글로벌 상태] ==========
-let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// 🤖 기본 시스템 프롬프트
+// 🤖 시스템 프롬프트 (HTML 태그 보존 강조)
 let currentSystemPrompt = `
-1. 역할: 당신은 요기보(Yogibo)의 친절한 상담원입니다.
-2. 태도: 고객에게 공감하며 따뜻한 말투("~해요", "~입니다")를 사용하세요.
-3. 원칙: 제공된 [참고 정보]에 있는 내용으로만 답변하세요. 모르는 내용은 솔직히 모른다고 답하세요.
+1. 역할: 요기보(Yogibo)의 친절한 상담원입니다.
+2. 태도: 공감하고 따뜻한 말투("~해요")를 사용하세요.
+3. 중요: [참고 정보]에 <iframe>(영상)이나 <img>(이미지) 태그가 있다면 절대 생략하지 말고 답변에 그대로 포함해서 출력하세요.
 `;
 
 // ========== [상수: HTML 템플릿] ==========
@@ -108,7 +107,7 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-// ✅ [RAG 로직 1] DB에서 데이터 갱신
+// ✅ [RAG 로직 1] DB 데이터 갱신
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
@@ -128,7 +127,7 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [RAG 로직 2] 관련성 높은 질문 찾기
+// ✅ [RAG 로직 2] 검색
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length) return [];
@@ -219,23 +218,14 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [★ 수정됨: findAnswer] ==========
+// ========== [하드코딩 규칙 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
-    
-    // 1. 상담사 연결
     if (normalized.includes("상담사 연결") || normalized.includes("상담원 연결")) return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
-    
-    // 2. 고객센터 안내
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
-    
-    // ❌ [삭제됨] 매장 안내 하드코딩 (이제 DB 검색으로 넘어감)
-    
-    // 3. 장바구니/회원정보
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 4. 주문번호로 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -250,8 +240,6 @@ async function findAnswer(userInput, memberId) {
         }
         return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-
-    // 5. 일반 배송/주문 조회
     const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
     if (isTracking && !containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
@@ -272,7 +260,6 @@ async function findAnswer(userInput, memberId) {
         return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
     
-    // 6. JSON 데이터 (사이즈 등)
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드"];
@@ -298,12 +285,11 @@ app.post("/chat_send", async (req, res) => {
             role, content: fullPrompt, createdAt: new Date()
         });
         currentSystemPrompt = fullPrompt;
-        console.log("♻️ 시스템 프롬프트 실시간 업데이트됨");
         res.json({ message: "LLM 교육(프롬프트 설정)이 완료되었습니다." });
     } catch (e) { res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
-// ========== [메인 Chat 요청 처리] ==========
+// ========== [★ 핵심 Chat 요청 처리] ==========
 app.post("/chat", async (req, res) => {
   const { message, memberId } = req.body;
   if (!message) return res.status(400).json({ error: "No message" });
@@ -322,6 +308,26 @@ app.post("/chat", async (req, res) => {
     // 3. GPT 질문
     let gptAnswer = await getGPT3TurboResponse(message, docs);
     gptAnswer = formatResponseText(gptAnswer);
+
+    // 4. [★ 중요] 영상/이미지 강제 복구 로직 (GPT가 빼먹었을 때 대비)
+    if (docs.length > 0) {
+        // 가장 관련성 높은 데이터(docs[0])를 확인
+        const bestDoc = docs[0];
+        // 원본 데이터에는 있는데, GPT 답변에는 없는 경우 강제 추가
+        if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
+            // 원본의 iframe 태그들을 모두 추출
+            const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g);
+            if (iframes) {
+                gptAnswer += "\n<br><br>" + iframes.join("\n<br>");
+            }
+        }
+        if (bestDoc.a.includes("<img") && !gptAnswer.includes("<img")) {
+            const imgs = bestDoc.a.match(/<img.*?>/g);
+            if (imgs) {
+                 gptAnswer += "\n<br><br>" + imgs.join("\n<br>");
+            }
+        }
+    }
 
     if (docs.length === 0) gptAnswer += FALLBACK_MESSAGE_HTML;
 
