@@ -309,6 +309,20 @@ async function findAnswer(userInput, memberId) {
     return null;
 }
 
+// ========== [★누락되었던 함수 복구] 대화 로그 저장 함수 ==========
+async function saveConversationLog(mid, uMsg, bRes) {
+    const client = new MongoClient(MONGODB_URI);
+    try { 
+        await client.connect(); 
+        await client.db(DB_NAME).collection("conversationLogs").updateOne(
+            { memberId: mid || null, date: new Date().toISOString().split("T")[0] }, 
+            { $push: { conversation: { userMessage: uMsg, botResponse: bRes, createdAt: new Date() } } }, 
+            { upsert: true }
+        ); 
+    } catch(e) { console.error("로그 저장 실패:", e); } 
+    finally { await client.close(); }
+}
+
 // ========== [메인 Chat] ==========
 app.post("/chat", async (req, res) => {
   const { message, memberId } = req.body;
