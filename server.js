@@ -61,9 +61,11 @@ let allSearchableData = [...staticFaqList];
 
 // 🤖 시스템 프롬프트
 let currentSystemPrompt = `
-1. 역할: 요기보(Yogibo)의 친절한 상담원입니다.
-2. 태도: 공감하고 따뜻한 말투("~해요")를 사용하세요.
-3. 원칙: [참고 정보]에 없는 내용은 지어내지 말고 모른다고 하세요.
+1. 역할: 당신은 '요기보(Yogibo)'의 전문 상담원입니다.
+2. 태도: 공감하고 친절하게 대답하되, 사실에 입각해 설명하세요.
+3. 절대 원칙: 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
+4. 금지 사항: [참고 정보]에 없는 내용은 절대 지어내지 마세요. 모르는 내용은 "죄송합니다. 해당 정보는 아직 학습되지 않았습니다."라고 솔직하게 말하세요.
+5. 문맥 주의: '빈백'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 '소파/바디필로우' 제품군을 의미합니다. 엉뚱한 물건으로 착각하지 마세요.
 `;
 
 // ========== [상수: HTML 템플릿] ==========
@@ -149,6 +151,7 @@ async function updateSearchableData() {
 }
 
 // ✅ [RAG 로직 2] 검색
+// ✅ [RAG 로직 2] 검색 (기준 강화)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length) return [];
@@ -159,26 +162,45 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 20;
+    // 질문과 데이터 질문이 아주 유사하면 큰 점수
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
+    
+    // 키워드 매칭 점수
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 10;
-      if (item.a.toLowerCase().includes(cleanW)) score += 3;
+      if (item.q.toLowerCase().includes(cleanW)) score += 15; // 질문 매칭 가중치 높임
+      if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
     return { ...item, score };
   });
 
-  return scored.filter(i => i.score >= 3).sort((a, b) => b.score - a.score).slice(0, 3);
+  // 점수 내림차순 정렬 후 상위 3개 추출
+  // ★ 수정: 기준 점수를 3점에서 10점으로 상향 (엄격하게)
+  return scored.filter(i => i.score >= 6).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ✅ [GPT 호출]
+// ✅ [GPT 호출] (창의력 0 설정)
 async function getGPT3TurboResponse(input, context = []) {
+  // 검색된 정보가 하나도 없으면 바로 모른다고 처리 (GPT 비용 절약 + 환각 방지)
+  if (context.length === 0) {
+      return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 고객센터(02-557-0920)로 문의해주시면 친절히 안내해 드리겠습니다.";
+  }
+
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
-  const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${txt || "관련된 정보가 없습니다."}`;
+  const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${txt}`;
+
   try {
     const res = await axios.post(OPEN_URL, {
-      model: FINETUNED_MODEL, messages: [{ role: "system", content: sys }, { role: "user", content: input }]
-    }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
+      model: FINETUNED_MODEL, 
+      messages: [
+          { role: "system", content: sys }, 
+          { role: "user", content: input }
+      ],
+      temperature: 0, // ★ 핵심: 0에 가까울수록 사실 기반, 1에 가까울수록 아무말 대잔치
+      max_tokens: 500 // 답변 길이 제한
+    }, { 
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } 
+    });
     return res.data.choices[0].message.content;
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
