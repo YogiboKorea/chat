@@ -44,18 +44,18 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
+// ★ [핵심] 시스템 프롬프트: "추측 금지" 조항을 강력하게 추가
 let currentSystemPrompt = `
 1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 전문 상담원입니다.
 2. 태도: 고객에게 공감하며 따뜻하고 친절한 말투("~해요", "~인가요?")를 사용하세요.
 3. 절대 원칙: 
-   - 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
-   - [참고 정보]에 없는 수치(사이즈, 가격 등)나 내용은 절대 지어내지 말고, "죄송합니다. 해당 정보는 아직 학습되지 않았습니다."라고 솔직하게 말하세요.
-4. 중요 지식 (오답 방지): 
-   - '빈백(Beanbag)'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 주력 상품인 '소파' 또는 '바디필로우'를 의미합니다. 
-   - 절대 빈백을 가방, 핸드백, 패션 잡화로 설명하지 마세요.
-5. 이미지 답변 규칙:
-   - 참고 정보에 이미지가 있다면, 굳이 텍스트로 상세 스펙(길이, 무게 등)을 설명하려 하지 말고 "요청하신 이미지 정보입니다."라고만 하고 이미지를 보여주세요.
-   - 이미지를 보여줄 때는 HTML 태그(<img...>)를 변경하지 말고 그대로 출력하세요.
+   - 반드시 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
+   - [참고 정보]에 없는 내용은 "죄송합니다. 해당 상품에 대한 정확한 정보가 아직 확인되지 않습니다."라고 솔직하게 말하세요.
+4. ★ 추측 및 날조 금지 (가장 중요):
+   - 제품 이름만 보고 기능을 유추하거나 지어내지 마세요. 
+   - 예: '롤 메이트'를 보고 청소 도구라고 추측하지 마세요. 정보가 없으면 모른다고 하세요.
+   - '빈백'은 가방이 아니라 소파/바디필로우입니다.
+5. 포맷: HTML 태그(<img...>, <iframe...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
 // ========== 상담사 연결 링크 ==========
@@ -121,6 +121,9 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
+// ✅ [핵심 수정] 검색 정확도 기준 대폭 상향 (5점 -> 15점)
+// 애매하게 관련 있는 정보(예: '롤'자가 들어간 다른 제품)가 검색되면, GPT가 그걸 보고 헛소리를 합니다.
+// 아예 검색이 안 되게 막아서 "모른다"고 답하게 유도합니다.
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -132,32 +135,43 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
+    // 1. 질문 통째로 일치 (가장 강력)
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 50;
+    
+    // 2. 단어 매칭
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 15;
+      if (item.q.toLowerCase().includes(cleanW)) score += 20; // 질문에 포함되면 높은 점수
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
 
-    // 역방향 검색 (DB키워드가 질문에 포함되는지)
+    // 3. 역방향 검색
     const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
     dbKeywords.forEach(dbK => {
-        if (msg.includes(dbK)) score += 10;
+        if (msg.includes(dbK)) score += 15;
     });
 
     return { ...item, score };
   });
 
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
+  // ★ 커트라인 15점으로 상향! (어설픈 매칭은 아예 배제함)
+  return scored.filter(i => i.score >= 15).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 async function getGPT3TurboResponse(input, context = []) {
-  if (context.length === 0) return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 아래 상담 채널을 이용해주시면 친절히 안내해 드리겠습니다.";
+  // 정보가 없으면 바로 Fallback 메시지 반환 (GPT 비용 절약 + 환각 차단)
+  if (context.length === 0) {
+      return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보가 확인되지 않습니다. 아래 상담 채널을 이용해주시면 친절히 안내해 드리겠습니다.";
+  }
+
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
   const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${txt}`;
+
   try {
     const res = await axios.post(OPEN_URL, {
-      model: FINETUNED_MODEL, messages: [{ role: "system", content: sys }, { role: "user", content: input }], temperature: 0
+      model: FINETUNED_MODEL, 
+      messages: [{ role: "system", content: sys }, { role: "user", content: input }], 
+      temperature: 0 // 창의성 0 (팩트만 말하게)
     }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
     return res.data.choices[0].message.content;
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
@@ -168,7 +182,6 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [API] PDF 업로드 (한글 깨짐 방지 추가) ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -176,16 +189,14 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         await client.connect();
         const db = client.db(DB_NAME);
 
-        // [★추가] 한글 파일명 깨짐 방지 (Latin1 -> UTF8 변환)
+        let originalName = req.file ? req.file.originalname : "";
         if (req.file) {
-            req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+            originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
         }
 
         if (req.file && req.file.mimetype === 'application/pdf') {
             const dataBuffer = fs.readFileSync(req.file.path);
             const data = await pdfParse(dataBuffer);
-            
-            // 텍스트 정제 (불필요한 공백 제거)
             const cleanText = data.text.replace(/\n\n+/g, '\n').replace(/\s+/g, ' ').trim();
             
             const chunkSize = 500; 
@@ -195,13 +206,12 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             }
             const docs = chunks.map((chunk, index) => ({
                 category: "pdf-knowledge",
-                question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
+                question: `[PDF 학습데이터] ${originalName} (Part ${index + 1})`, 
                 answer: chunk, 
                 createdAt: new Date()
             }));
             
             if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
-            
             fs.unlink(req.file.path, () => {});
             await updateSearchableData();
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
@@ -221,7 +231,6 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
     } finally { await client.close(); }
 });
 
-// ========== [API] 이미지 등록 (한글 깨짐 방지 추가) ==========
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -229,7 +238,6 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
 
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
 
-    // [★추가] 한글 파일명 깨짐 방지
     req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
     try {
@@ -238,7 +246,6 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
         try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } 
         catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
 
-        // FTP 업로드 시에는 파일명 충돌 방지를 위해 timestamp 사용 (깨짐 방지에도 도움됨)
         const safeFilename = `${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
         await ftpClient.uploadFrom(req.file.path, safeFilename);
         
@@ -272,7 +279,6 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     try {
         await client.connect(); const db = client.db(DB_NAME); let newAnswer = answer;
         if (file) {
-            // [★추가] 수정 시에도 한글 처리
             file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
             const safeFilename = `${Date.now()}_edit.jpg`;
 
@@ -419,7 +425,9 @@ app.post("/chat", async (req, res) => {
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
         if (bestDoc.a.includes("<img") && !gptAnswer.includes("<img")) { const imgs = bestDoc.a.match(/<img.*?>/g); if (imgs) gptAnswer += "\n" + imgs.join("\n"); }
     }
-    if (docs.length === 0) gptAnswer += FALLBACK_MESSAGE_HTML;
+    // 검색 결과가 아예 없으면 즉시 Fallback 메시지
+    if (docs.length === 0) gptAnswer = FALLBACK_MESSAGE_HTML;
+
     const finalAnswer = formatResponseText(gptAnswer);
     await saveConversationLog(memberId, message, finalAnswer);
     res.json({ text: finalAnswer, videoHtml: null });
