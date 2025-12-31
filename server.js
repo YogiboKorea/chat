@@ -252,60 +252,78 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
     } finally { await client.close(); }
 });
 
-// ========== [★ 핵심: 이미지 지식 등록 (FTP 전송)] ==========
+// ========== [★수정] 이미지 지식 등록 API (폴더 단계별 생성) ==========
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
-    const { keyword } = req.body;
-    const client = new MongoClient(MONGODB_URI);
-    const ftpClient = new ftp.Client();
+  const { keyword } = req.body;
+  const client = new MongoClient(MONGODB_URI);
+  const ftpClient = new ftp.Client();
 
-    if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
+  if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
 
-    try {
-        // 1. FTP 접속 (새로운 환경변수 사용)
-        await ftpClient.access({
-            host: YOGIBO_FTP,
-            user: YOGIBO_FTP_ID,
-            password: YOGIBO_FTP_PW,
-            secure: false
-        });
+  try {
+      // [안전장치] 주소 보정
+      const cleanFtpHost = YOGIBO_FTP
+          .replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '')
+          .replace(/\/$/, '');
 
-        // 2. 업로드 경로 설정 (/web/chat)
-        const remoteDir = "web/chat";
-        await ftpClient.ensureDir(remoteDir); // 폴더가 없으면 생성
-        await ftpClient.uploadFrom(req.file.path, `${remoteDir}/${req.file.filename}`);
+      // 1. FTP 접속
+      await ftpClient.access({
+          host: cleanFtpHost,
+          user: YOGIBO_FTP_ID,
+          password: YOGIBO_FTP_PW,
+          secure: false
+      });
 
-        // 3. 이미지 URL 생성 (FTP_PUBLIC_BASE + 경로)
-        // 결과 예시: https://yogibo.kr/web/chat/파일명.jpg
-        const imageUrl = `${FTP_PUBLIC_BASE}${remoteDir}/${req.file.filename}`;
+      // 2. [핵심 수정] 폴더를 한 단계씩 진입합니다. (web -> chat)
+      // ensureDir은 "폴더가 없으면 만들고, 그 안으로 들어간다(cd)"는 뜻입니다.
+      
+      try {
+          await ftpClient.ensureDir("web");  // 1단계: 'web' 폴더로 진입
+          await ftpClient.ensureDir("chat"); // 2단계: 그 안에서 'chat' 폴더로 진입
+      } catch (dirErr) {
+          // 만약 web 폴더 생성이 막혀있다면, Cafe24 기본 폴더인 'www'일 수도 있습니다.
+          console.log("web 폴더 진입 실패, www로 재시도");
+          await ftpClient.cd("/"); // 처음으로 돌아가서
+          await ftpClient.ensureDir("www"); 
+          await ftpClient.ensureDir("chat");
+      }
 
-        // 4. DB 저장
-        await client.connect();
-        const db = client.db(DB_NAME);
-        
-        await db.collection("postItNotes").insertOne({
-            category: "image-knowledge",
-            question: keyword,
-            answer: `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
-            createdAt: new Date()
-        });
+      // 3. 업로드 (이미 해당 폴더 안에 들어와 있으므로 파일명만 적습니다)
+      await ftpClient.uploadFrom(req.file.path, req.file.filename);
 
-        // 5. 뒷정리
-        fs.unlink(req.file.path, () => {}); // 임시파일 삭제
-        ftpClient.close(); // FTP 연결 종료
-        await updateSearchableData(); // 검색 데이터 갱신
+      // 4. URL 생성 (Cafe24 경로 규칙에 맞춤)
+      // 우리가 web/chat 폴더에 넣었으므로 URL도 그대로 따라갑니다.
+      const remotePath = "web/chat"; 
+      const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
+      const imageUrl = `${publicBase}/${remotePath}/${req.file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
-        res.json({ message: "이미지 지식 등록 완료 (FTP 업로드 성공)" });
+      // 5. DB 저장
+      await client.connect();
+      const db = client.db(DB_NAME);
+      
+      await db.collection("postItNotes").insertOne({
+          category: "image-knowledge",
+          question: keyword,
+          answer: `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
+          createdAt: new Date()
+      });
 
-    } catch (e) {
-        console.error("FTP 업로드 오류:", e);
-        if (req.file) fs.unlink(req.file.path, () => {});
-        ftpClient.close();
-        res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
-    } finally {
-        await client.close();
-    }
+      // 6. 뒷정리
+      fs.unlink(req.file.path, () => {}); 
+      ftpClient.close(); 
+      await updateSearchableData(); 
+
+      res.json({ message: "이미지 지식 등록 완료" });
+
+  } catch (e) {
+      console.error("FTP 업로드 오류:", e);
+      if (req.file) fs.unlink(req.file.path, () => {});
+      ftpClient.close();
+      res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
+  } finally {
+      await client.close();
+  }
 });
-
 // ========== [Cafe24 API] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
