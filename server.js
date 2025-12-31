@@ -42,18 +42,19 @@ const upload = multer({
 });
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__dirname, 'uploads'));
 
-// ✅ 전역 변수: 모든 검색 데이터를 통합 관리
+// ✅ 글로벌 변수 (통합 검색 데이터)
+let pendingCoveringContext = false;
 let allSearchableData = []; 
 
-// ★ [시스템 프롬프트] GPT에게 "최종 판단관" 역할을 부여
+// ★ [시스템 프롬프트] GPT에게 "판단" 역할을 부여
 let currentSystemPrompt = `
-1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 AI 상담원입니다.
-2. ★ 절대 원칙 (Strict Rules):
-   - 아래 제공되는 [참고 정보]들을 꼼꼼히 읽고, 사용자 질문과 가장 관련 있는 내용을 바탕으로 답변하세요.
-   - [참고 정보]는 FAQ, 제품 매뉴얼, 회사 규정 등이 섞여 있습니다. 
-   - **만약 [참고 정보]를 다 읽어봐도 질문에 대한 명확한 답을 찾을 수 없거나, 요기보와 전혀 관련 없는 내용(코딩, 주식, 날씨 등)이라면, 답변을 지어내지 말고 오직 "NO_CONTEXT"라고만 출력하세요.**
+1. 역할: 당신은 '요기보(Yogibo)'의 AI 상담원입니다.
+2. ★ 중요 임무:
+   - 사용자 질문에 대해 아래 제공되는 [참고 정보]들을 꼼꼼히 읽어보고 답변을 작성하세요.
+   - [참고 정보]는 FAQ, 제품 매뉴얼, 회사 규정 등이 섞여 있습니다. 이 중에서 질문과 가장 관련 있는 내용을 찾아내세요.
+   - **만약 [참고 정보]를 다 읽어봐도 질문에 대한 답을 찾을 수 없거나, 요기보와 전혀 관련 없는 내용(코딩, 주식, 날씨 등)이라면, 절대 지어내지 말고 오직 "NO_CONTEXT"라고만 출력하세요.**
 3. 답변 스타일:
-   - 고객에게 말하듯 친절하고 정중하게 답변하세요.
+   - 친절하고 전문적인 톤으로 답변하세요.
    - 링크는 [버튼명](URL) 형식으로, 이미지는 <img src="..."> 태그를 그대로 유지하세요.
 `;
 
@@ -77,13 +78,6 @@ const COUNSELOR_LINKS_HTML = `
 `;
 
 const FALLBACK_MESSAGE_HTML = `<div style="margin-top: 10px;">${COUNSELOR_LINKS_HTML}</div>`;
-const RETRY_MESSAGE_HTML = `
-<div style="margin-top: 10px;">
-  <p style="font-size:14px; color:#333; font-weight:bold;">🤔 질문을 조금 더 구체적으로 말씀해 주시겠어요?</p>
-  <p style="font-size:13px; color:#555;">예: "세탁" (X) → "맥스 커버 세탁 방법" (O)</p>
-  ${COUNSELOR_LINKS_HTML}
-</div>
-`;
 const LOGIN_BTN_HTML = `<div style="margin-top:15px;"><a href="/member/login.html" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center;">로그인 하러 가기 →</a></div>`;
 
 // JSON 데이터 로드
@@ -152,7 +146,7 @@ async function updateSearchableData() {
         });
     }
 
-    // 4. 모든 데이터 합치기 (All-In-One)
+    // 4. 모든 데이터 합치기
     allSearchableData = [...faqData, ...dbData, ...jsonData];
     
     // 시스템 프롬프트 업데이트
@@ -165,7 +159,6 @@ async function updateSearchableData() {
 }
 
 // ★ [핵심] 정밀 검색 로직 (Broad Search)
-// - 5점 이상이면 일단 다 가져옴 (놓치는 정보 없도록)
 function findAllRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1); // 2글자 이상 키워드
   if (!kws.length && msg.length < 2) return [];
@@ -191,8 +184,8 @@ function findAllRelevantContent(msg) {
     return { ...item, score };
   });
 
-  // ★ 문턱 5점: "혹시 모르니 일단 다 GPT한테 보여주자" 전략
-  // 상위 5개 문서 추출
+  // ★ 문턱을 5점으로 대폭 낮춤 (단어 하나라도 맞으면 일단 가져옴)
+  // 상위 5개까지 넉넉하게 가져옴
   return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 5);
 }
 
@@ -258,11 +251,11 @@ async function getShipmentDetail(orderId) {
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // ★ 1. [서버 필터] 요기보와 무관한 키워드 원천 차단 (토큰 절약)
-    const blockKeywords = ["파이썬", "python", "노드", "node", "자바", "코딩", "sql", "mysql", "db", "주식", "비트코인", "날씨", "정치", "게임", "영화", "맛집", "역사"];
+    // ★ 1. 금지어 필터 (토큰 절약 & 엉뚱한 답변 차단)
+    const blockKeywords = ["파이썬", "python", "노드", "node", "자바", "코딩", "sql", "mysql", "db", "주식", "비트코인", "날씨", "정치", "게임", "영화", "맛집"];
     for (let badWord of blockKeywords) {
         if (normalized.toLowerCase().includes(badWord)) {
-            return { text: `죄송합니다. 저는 **요기보(Yogibo)** 제품과 서비스에 대해서만 안내해 드릴 수 있습니다. 😅<br>요기보에 대해 궁금한 점을 물어봐 주세요!` };
+            return { text: `죄송합니다. 저는 **요기보(Yogibo)** 제품 상담만 도와드릴 수 있어요. 😅<br>요기보에 대해 궁금한 점이 있다면 물어봐 주세요!` };
         }
     }
 
@@ -276,7 +269,7 @@ async function findAnswer(userInput, memberId) {
         return { text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br>요기보는 전자기기가 아닙니다! <b>'충전'</b>은 푹 꺼진 소파에 <b>'비즈(충전재)'</b>를 채워넣는 것을 의미해요.<br><a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` };
     }
 
-    // 4. [안전한] 상품 검색 링크 생성
+    // 4. 상품 검색 링크 생성
     const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라", "플랜트"];
     for (const product of productKeywords) {
         if (normalized.includes(product)) {
@@ -292,7 +285,7 @@ async function findAnswer(userInput, memberId) {
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊 (평일 10:00~17:30)" };
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동합니다.<br><a href="/order/basket.html">🛒 바로가기</a>` } : { text: `로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 6. 배송 조회
+    // 6. 배송 조회 (로그인 체크 및 API 호출 포함)
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -316,7 +309,7 @@ async function findAnswer(userInput, memberId) {
     return null;
 }
 
-// [복구 완료] 대화 로그 저장 함수
+// ========== [★누락되었던 함수 복구] 대화 로그 저장 함수 ==========
 async function saveConversationLog(mid, uMsg, bRes) {
     const client = new MongoClient(MONGODB_URI);
     try { 
@@ -336,14 +329,14 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 & 금지어 확인 (파이썬 등은 여기서 걸러짐)
+    // 1단계: 규칙 & 금지어 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: 통합 데이터 검색 (5점 이상이면 다 가져옴 -> 과잉 차단 해결)
+    // 2단계: 통합 데이터 검색 (문턱 5점 - 아주 낮게 설정해서 일단 다 긁어모음)
     const docs = findAllRelevantContent(message);
     
     let gptAnswer = "";
@@ -357,11 +350,11 @@ app.post("/chat", async (req, res) => {
         
         // GPT가 "NO_CONTEXT" (답 없음) 이라고 판단하면 -> Fallback
         if (gptAnswer.includes("NO_CONTEXT")) {
-            gptAnswer = RETRY_MESSAGE_HTML; // 혹은 FALLBACK
+            gptAnswer = FALLBACK_MESSAGE_HTML;
         } else {
             // 답이 있으면 이미지 복구 로직 실행
             if (docs.length > 0) {
-                const bestDoc = docs[0]; 
+                const bestDoc = docs[0]; // 가장 점수 높은 문서 기준
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
                 if (bestDoc.a.includes("<img") && !gptAnswer.includes("<img")) { const imgs = bestDoc.a.match(/<img.*?>/g); if (imgs) gptAnswer += "\n" + imgs.join("\n"); }
             }
@@ -377,32 +370,40 @@ app.post("/chat", async (req, res) => {
 
 // ========== [파일 및 데이터 관리 API] ==========
 
-// 1. PDF/텍스트 파일 업로드
+// 1. PDF/텍스트 파일 업로드 및 분석
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect(); const db = client.db(DB_NAME);
+        
+        // PDF 파일 처리
         if (req.file) {
             req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
             if (req.file.mimetype === 'application/pdf') {
                 const dataBuffer = fs.readFileSync(req.file.path); 
                 const data = await pdfParse(dataBuffer);
                 const cleanText = data.text.replace(/\n\n+/g, '\n').replace(/\s+/g, ' ').trim();
+                
+                // 500자 단위 분할
                 const chunks = []; 
                 for (let i = 0; i < cleanText.length; i += 500) chunks.push(cleanText.substring(i, i + 500));
+                
                 const docs = chunks.map((chunk, index) => ({ 
                     category: "pdf-knowledge", 
                     question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
                     answer: chunk, 
                     createdAt: new Date() 
                 }));
+                
                 if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
                 fs.unlink(req.file.path, () => {}); 
-                await updateSearchableData(); 
+                await updateSearchableData(); // 데이터 갱신
                 return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
             }
         }
+        
+        // 롤(프롬프트) 설정
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({ role, content: fullPrompt, createdAt: new Date() });
@@ -410,10 +411,13 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             return res.json({ message: "LLM 역할 설정이 완료되었습니다." });
         }
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
-    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); res.status(500).json({ error: e.message }); } finally { await client.close(); }
+    } catch (e) { 
+        if (req.file) fs.unlink(req.file.path, () => {}); 
+        res.status(500).json({ error: e.message }); 
+    } finally { await client.close(); }
 });
 
-// 2. 이미지 지식 업로드
+// 2. 이미지 지식 업로드 (FTP)
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -421,21 +425,35 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
     
     req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    
     try {
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
         try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
+        
         const safeFilename = `${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
         await ftpClient.uploadFrom(req.file.path, safeFilename);
+        
         const remotePath = "web/chat"; const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
         const imageUrl = `${publicBase}/${remotePath}/${safeFilename}`.replace(/([^:]\/)\/+/g, '$1');
-        await client.connect(); await client.db(DB_NAME).collection("postItNotes").insertOne({ 
-            category: "image-knowledge", question: keyword, 
-            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`, createdAt: new Date() 
+        
+        await client.connect(); 
+        await client.db(DB_NAME).collection("postItNotes").insertOne({ 
+            category: "image-knowledge", 
+            question: keyword, 
+            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`, 
+            createdAt: new Date() 
         });
-        fs.unlink(req.file.path, () => {}); ftpClient.close(); await updateSearchableData();
+        
+        fs.unlink(req.file.path, () => {}); 
+        ftpClient.close(); 
+        await updateSearchableData(); // 데이터 갱신
         res.json({ message: "이미지 지식 등록 완료" });
-    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); ftpClient.close(); res.status(500).json({ error: e.message }); } finally { await client.close(); }
+    } catch (e) { 
+        if (req.file) fs.unlink(req.file.path, () => {}); 
+        ftpClient.close(); 
+        res.status(500).json({ error: e.message }); 
+    } finally { await client.close(); }
 });
 
 // 3. 게시글 수정
@@ -445,6 +463,7 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     try {
         await client.connect(); const db = client.db(DB_NAME); let newAnswer = answer;
         if (file) {
+            // 이미지 수정 시 FTP 업로드 로직 동일
             file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
             const safeFilename = `${Date.now()}_edit.jpg`;
             const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
@@ -467,6 +486,7 @@ app.delete("/postIt/:id", async(req, res) => {
     const { id } = req.params; const client = new MongoClient(MONGODB_URI); const ftpClient = new ftp.Client();
     try {
         await client.connect(); const db = client.db(DB_NAME);
+        // 이미지 파일이 있다면 FTP에서도 삭제 시도
         const targetPost = await db.collection("postItNotes").findOne({ _id: new ObjectId(id) });
         if (targetPost) {
             const imgMatch = targetPost.answer && targetPost.answer.match(/src="([^"]+)"/);
@@ -488,24 +508,47 @@ app.delete("/postIt/:id", async(req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
-// 5. 게시글 조회
+// 5. 게시글 조회 (페이징)
 app.get("/postIt", async (req, res) => {
     const p = parseInt(req.query.page)||1; const l=300;
-    try { const c=new MongoClient(MONGODB_URI); await c.connect(); const f = req.query.category?{category:req.query.category}:{}; const n = await c.db(DB_NAME).collection("postItNotes").find(f).sort({_id:-1}).skip((p-1)*l).limit(l).toArray(); await c.close(); res.json({notes:n, currentPage:p}); } catch(e){res.status(500).json({error:e.message})}
+    try { 
+        const c=new MongoClient(MONGODB_URI); await c.connect(); 
+        const f = req.query.category?{category:req.query.category}:{}; 
+        const n = await c.db(DB_NAME).collection("postItNotes").find(f).sort({_id:-1}).skip((p-1)*l).limit(l).toArray(); 
+        await c.close(); res.json({notes:n, currentPage:p}); 
+    } catch(e){res.status(500).json({error:e.message})}
 });
 
 // 6. 게시글 등록
-app.post("/postIt", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect(); await c.db(DB_NAME).collection("postItNotes").insertOne({...req.body,createdAt:new Date()}); await c.close(); await updateSearchableData(); res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
+app.post("/postIt", async(req,res)=>{ 
+    try{
+        const c=new MongoClient(MONGODB_URI);await c.connect(); 
+        await c.db(DB_NAME).collection("postItNotes").insertOne({...req.body,createdAt:new Date()}); 
+        await c.close(); await updateSearchableData(); 
+        res.json({message:"OK"})
+    }catch(e){res.status(500).json({error:e.message})} 
+});
 
-// 7. 엑셀 다운로드
-app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();const d=await c.db(DB_NAME).collection("conversationLogs").find({}).toArray();await c.close(); const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Log');ws.columns=[{header:'ID',key:'m'},{header:'Date',key:'d'},{header:'Log',key:'c'}]; d.forEach(r=>ws.addRow({m:r.memberId||'Guest',d:r.date,c:JSON.stringify(r.conversation)})); res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");res.setHeader("Content-Disposition","attachment; filename=log.xlsx"); await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
+// 7. 대화 로그 엑셀 다운로드
+app.get('/chatConnet', async(req,res)=>{ 
+    try{
+        const c=new MongoClient(MONGODB_URI);await c.connect();
+        const d=await c.db(DB_NAME).collection("conversationLogs").find({}).toArray();await c.close(); 
+        const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Log');
+        ws.columns=[{header:'ID',key:'m'},{header:'Date',key:'d'},{header:'Log',key:'c'}]; 
+        d.forEach(r=>ws.addRow({m:r.memberId||'Guest',d:r.date,c:JSON.stringify(r.conversation)})); 
+        res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition","attachment; filename=log.xlsx"); 
+        await wb.xlsx.write(res);res.end();
+    }catch(e){res.status(500).send("Err")} 
+});
 
-// 서버 실행
+// 서버 시작
 (async function initialize() {
   try { 
       console.log("🟡 서버 시작..."); 
       await getTokensFromDB(); 
-      await updateSearchableData(); 
+      await updateSearchableData(); // 여기서 모든 데이터 통합 로드
       app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`)); 
   } catch (err) { console.error("❌ 초기화 오류:", err.message); process.exit(1); }
 })();
