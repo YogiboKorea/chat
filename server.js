@@ -9,23 +9,26 @@ const { MongoClient, ObjectId } = require("mongodb");
 const levenshtein = require("fast-levenshtein");
 const ExcelJS = require("exceljs");
 const multer = require('multer');
-const ftp = require('basic-ftp');
+const ftp = require('basic-ftp'); // FTP 라이브러리
 const dayjs = require('dayjs');
-const pdfParse = require('pdf-extraction'); // ✅ [수정됨] 안정적인 라이브러리로 교체
+const pdfParse = require('pdf-extraction');
 
-// ✅ [중요] .env 파일 경로 명시적 지정
+// ✅ .env 파일 경로 설정
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-// ✅ 정적 FAQ 데이터 불러오기
+// ✅ 정적 FAQ 데이터
 const staticFaqList = require("./faq");
 
-// ========== [환경 설정] ==========
+// ========== [환경 변수 설정] ==========
 const {
   ACCESS_TOKEN, REFRESH_TOKEN, CAFE24_CLIENT_ID, CAFE24_CLIENT_SECRET,
   DB_NAME, MONGODB_URI, CAFE24_MALLID, OPEN_URL, API_KEY,
   FINETUNED_MODEL = "gpt-3.5-turbo", CAFE24_API_VERSION = "2024-06-01",
-  PORT = 5000, FTP_PUBLIC_BASE,
-  FTP_HOST, FTP_USER, FTP_PASS
+  PORT = 5000, 
+  FTP_PUBLIC_BASE, // 예: https://yogibo.kr (이미지 주소 앞부분)
+  YOGIBO_FTP,      // 예: yogibo.ftp.cafe24.com
+  YOGIBO_FTP_ID,   // FTP 아이디
+  YOGIBO_FTP_PW    // FTP 패스워드
 } = process.env;
 
 let accessToken = ACCESS_TOKEN;
@@ -38,16 +41,16 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ [수정됨] 파일 업로드 설정 (용량 50MB로 증가)
+// ✅ 파일 업로드 설정 (Multer - 임시 저장용, 50MB 제한)
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
         filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname}`)
     }),
-    limits: { fileSize: 50 * 1024 * 1024 } // 💥 50MB 제한 (기존 10MB에서 상향)
+    limits: { fileSize: 50 * 1024 * 1024 } 
 });
 
-// 폴더가 없으면 생성
+// uploads 폴더 자동 생성
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
     fs.mkdirSync(path.join(__dirname, 'uploads'));
 }
@@ -130,14 +133,12 @@ async function updateSearchableData() {
     await client.connect();
     const db = client.db(DB_NAME);
 
-    // postItNotes 컬렉션에서 데이터 가져오기 (PDF 내용 포함)
     const notes = await db.collection("postItNotes").find({}).toArray();
     const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
     
     allSearchableData = [...staticFaqList, ...dynamic];
     console.log(`✅ 검색 데이터 갱신 완료: 총 ${allSearchableData.length}개 로드됨`);
 
-    // 최신 시스템 프롬프트 적용
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) {
         currentSystemPrompt = prompts[0].content; 
@@ -157,7 +158,6 @@ function findRelevantContent(msg) {
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 20;
-    
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 10;
@@ -181,31 +181,23 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [유틸 함수: 텍스트 포맷팅 (줄바꿈 최적화 + 링크 변환)] ==========
+// ========== [유틸 함수] ==========
 function formatResponseText(text) {
   if (!text) return "";
   let formatted = text;
-
-  // 마침표 뒤 강제 줄바꿈 코드 제거됨 (formatted = text.replace...)
-  
-  // 마크다운 링크 변환
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
   });
-
-  // 일반 URL 텍스트 변환
   formatted = formatted.replace(/(?<!href="|">)(https?:\/\/[^\s<)]+)/g, (url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${url}</a>`;
   });
-
   return formatted;
 }
-
 function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없나요/g, "없어요").trim(); }
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [API: PDF 업로드 및 분석] ==========
+// ========== [API: PDF 업로드] ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -214,14 +206,12 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         await client.connect();
         const db = client.db(DB_NAME);
 
-        // 1️⃣ PDF 파일 (지식 학습)
+        // 1. PDF 파일 (지식 학습)
         if (req.file && req.file.mimetype === 'application/pdf') {
             const dataBuffer = fs.readFileSync(req.file.path);
-            const data = await pdfParse(dataBuffer); // pdf-extraction 사용
+            const data = await pdfParse(dataBuffer);
             
             const cleanText = data.text.replace(/\n\n+/g, '\n').trim();
-            
-            // ★ 500자 단위 Chunking
             const chunkSize = 500; 
             const chunks = [];
             for (let i = 0; i < cleanText.length; i += chunkSize) {
@@ -245,7 +235,7 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
         }
 
-        // 2️⃣ 텍스트 역할 설정
+        // 2. 역할 설정 (텍스트)
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({
@@ -258,10 +248,61 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
 
     } catch (e) { 
-        console.error("PDF 처리 중 오류:", e);
-        res.status(500).json({ error: e.message }); 
-    } finally { 
-        await client.close(); 
+        console.error(e); res.status(500).json({ error: e.message }); 
+    } finally { await client.close(); }
+});
+
+// ========== [★ 핵심: 이미지 지식 등록 (FTP 전송)] ==========
+app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
+    const { keyword } = req.body;
+    const client = new MongoClient(MONGODB_URI);
+    const ftpClient = new ftp.Client();
+
+    if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
+
+    try {
+        // 1. FTP 접속 (새로운 환경변수 사용)
+        await ftpClient.access({
+            host: YOGIBO_FTP,
+            user: YOGIBO_FTP_ID,
+            password: YOGIBO_FTP_PW,
+            secure: false
+        });
+
+        // 2. 업로드 경로 설정 (/web/chat)
+        const remoteDir = "/web/chat";
+        await ftpClient.ensureDir(remoteDir); // 폴더가 없으면 생성
+        await ftpClient.uploadFrom(req.file.path, `${remoteDir}/${req.file.filename}`);
+
+        // 3. 이미지 URL 생성 (FTP_PUBLIC_BASE + 경로)
+        // 결과 예시: https://yogibo.kr/web/chat/파일명.jpg
+        const imageUrl = `${FTP_PUBLIC_BASE}${remoteDir}/${req.file.filename}`;
+
+        // 4. DB 저장
+        await client.connect();
+        const db = client.db(DB_NAME);
+        
+        await db.collection("postItNotes").insertOne({
+            category: "image-knowledge",
+            question: keyword,
+            answer: `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
+            createdAt: new Date()
+        });
+
+        // 5. 뒷정리
+        fs.unlink(req.file.path, () => {}); // 임시파일 삭제
+        ftpClient.close(); // FTP 연결 종료
+        await updateSearchableData(); // 검색 데이터 갱신
+
+        res.json({ message: "이미지 지식 등록 완료 (FTP 업로드 성공)" });
+
+    } catch (e) {
+        console.error("FTP 업로드 오류:", e);
+        if (req.file) fs.unlink(req.file.path, () => {});
+        ftpClient.close();
+        res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
+    } finally {
+        await client.close();
     }
 });
 
@@ -302,7 +343,7 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 기반 답변 로직] ==========
+// ========== [규칙 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
@@ -397,7 +438,6 @@ app.post("/chat", async (req, res) => {
     let gptAnswer = await getGPT3TurboResponse(message, docs);
     gptAnswer = formatResponseText(gptAnswer);
 
-    // [구조대] GPT가 놓친 영상/이미지 복구
     if (docs.length > 0) {
         const bestDoc = docs[0];
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
@@ -452,14 +492,6 @@ app.post("/postIt", async(req,res)=>{
 
 app.put("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").updateOne({_id:new ObjectId(req.params.id)},{$set:{...req.body,updatedAt:new Date()}});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 app.delete("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").deleteOne({_id:new ObjectId(req.params.id)});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
-
-app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
-  if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
-  try{await c.access({host:process.env.FTP_HOST,user:process.env.FTP_USER,password:process.env.FTP_PASS,secure:false});
-    const dir=`yogibo/${dayjs().format('YYYY/MM/DD')}`; await c.cd('web/img/temple/uploads').catch(()=>{}); await c.ensureDir(dir); await c.uploadFrom(req.file.path,req.file.filename);
-    res.json({url:`${FTP_PUBLIC_BASE}/uploads/${dir}/${req.file.filename}`.replace(/([^:]\/)\/+/g,'$1')});
-  }catch(e){res.status(500).json({error:e.message})}finally{c.close();fs.unlink(req.file.path,()=>{})}
-});
 
 app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();const d=await c.db(DB_NAME).collection("conversationLogs").find({}).toArray();await c.close();
   const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Log');ws.columns=[{header:'ID',key:'m'},{header:'Date',key:'d'},{header:'Log',key:'c'}];
