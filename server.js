@@ -38,6 +38,11 @@ const upload = multer({
     limits: { fileSize: 50 * 1024 * 1024 }
 });
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__dirname, 'uploads'));
+
+// ★ [핵심 수정] 여기에 이 변수가 꼭 있어야 합니다!
+let pendingCoveringContext = false; 
+let allSearchableData = [...staticFaqList];
+
 let currentSystemPrompt = `
 1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 전문 상담원입니다.
 2. 태도: 고객에게 공감하며 따뜻하고 친절한 말투("~해요", "~인가요?")를 사용하세요.
@@ -51,6 +56,7 @@ let currentSystemPrompt = `
    - 참고 정보에 이미지가 있다면, 굳이 텍스트로 상세 스펙(길이, 무게 등)을 설명하려 하지 말고 "요청하신 이미지 정보입니다."라고만 하고 이미지를 보여주세요.
    - 이미지를 보여줄 때는 HTML 태그(<img...>)를 변경하지 말고 그대로 출력하세요.
 `;
+
 
 // ========== 상담사 연결 링크 ==========
 const COUNSELOR_LINKS_HTML = `
@@ -79,7 +85,6 @@ const LOGIN_BTN_HTML = `
 </div>
 `;
 
-// ... (DB 연결 로직 등은 동일) ...
 const companyDataPath = path.join(__dirname, "json", "companyData.json");
 let companyData = {};
 try { if (fs.existsSync(companyDataPath)) companyData = JSON.parse(fs.readFileSync(companyDataPath, "utf-8")); } catch (e) {}
@@ -103,7 +108,6 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-let allSearchableData = [...staticFaqList];
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
@@ -117,31 +121,24 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [핵심 수정] 검색 로직 개선 (한국어 띄어쓰기 문제 해결)
 function findRelevantContent(msg) {
-  // 1. 사용자 질문을 단어별로 쪼갬
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
-  if (!kws.length && msg.length < 2) return []; // 너무 짧으면 패스
+  if (!kws.length && msg.length < 2) return [];
 
   console.log(`🔍 검색 시작: "${msg}"`);
 
   const scored = allSearchableData.map(item => {
     let score = 0;
-    const q = (item.q || "").toLowerCase().replace(/\s+/g, ""); // DB 질문 (띄어쓰기 제거)
-    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");   // 사용자 질문 (띄어쓰기 제거)
+    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
+    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 1단계: 통째로 포함되는지 확인 (강력한 매칭)
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
-    
-    // 2단계: 사용자 질문의 단어가 DB에 있는지 확인
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
 
-    // 3단계: [신규] DB의 핵심 단어가 사용자 질문에 포함되는지 확인 (역방향 검색)
-    // 예: DB "매장" -> 사용자 "매장정보" (매장 포함됨 -> 점수!)
     const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
     dbKeywords.forEach(dbK => {
         if (msg.includes(dbK)) score += 10;
@@ -150,11 +147,9 @@ function findRelevantContent(msg) {
     return { ...item, score };
   });
 
-  // 점수 기준을 10점 -> 5점으로 낮춰서 웬만하면 답변하도록 조정
   return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ... (나머지 API 및 로직은 동일) ...
 async function getGPT3TurboResponse(input, context = []) {
   if (context.length === 0) return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 아래 상담 채널을 이용해주시면 친절히 안내해 드리겠습니다.";
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
@@ -316,7 +311,6 @@ async function findAnswer(userInput, memberId) {
           } catch (e) { return { text: "조회 실패." }; }
         } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-    // ... covering, sizeInfo 등 기존 로직 동일 ...
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
