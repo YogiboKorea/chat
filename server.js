@@ -153,16 +153,12 @@ function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
 
-  console.log(`🔍 검색 시작: "${msg}"`);
-
   const scored = allSearchableData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    if (q === cleanMsg) score += 100;
-    else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
-    
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
@@ -218,7 +214,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [Cafe24 API] ==========
+// ========== [Cafe24 API 공통 함수] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -228,6 +224,35 @@ async function apiRequest(method, url, data = {}, params = {}) {
       throw error;
     }
 }
+
+// ========== [★신규] Cafe24 상품 검색 API ==========
+async function searchProductOnCafe24(keyword) {
+    try {
+        const response = await apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products`, {}, {
+            product_name: keyword,
+            display: 'T', // 진열중
+            selling: 'T', // 판매중
+            limit: 1 // 가장 정확한 1개만
+        });
+
+        if (response.products && response.products.length > 0) {
+            const p = response.products[0];
+            // 정확한 상세 페이지 URL 생성 (product_no 사용)
+            const detailUrl = `https://yogibo.kr/product/detail.html?product_no=${p.product_no}`;
+            return {
+                name: p.product_name,
+                url: detailUrl,
+                price: p.price,
+                image: p.tiny_image // 썸네일 이미지 (있으면 좋음)
+            };
+        }
+        return null;
+    } catch (e) {
+        console.error("Cafe24 상품 검색 실패:", e.message);
+        return null;
+    }
+}
+
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
@@ -275,19 +300,36 @@ async function findAnswer(userInput, memberId) {
         };
     }
 
-    // ★ [3. 신규] 제품명 URL 자동 생성 로직
-    // 예: "슬림 제품 url 알려줘", "맥스 링크 줘" 등
+    // ★ [3. 수정됨] Cafe24 API를 통한 정확한 제품 URL 제공
     const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라"];
     
     for (const product of productKeywords) {
         if (normalized.includes(product)) {
-            // 제품명 + (URL, 링크, 주소, 검색, 찾아줘, 보여줘) 등의 키워드가 같이 있으면
-            if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래")) {
-                const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(product)}`;
-                return {
-                    text: `찾으시는 <b>'${product}'</b> 관련 제품 정보를 찾았습니다.<br>아래 링크를 통해 자세한 내용을 확인해보세요! 👇<br><br>
-                    <a href="${searchUrl}" target="_blank" style="color:#58b5ca; font-weight:bold;">🔍 ${product} 검색 결과 바로가기</a>`
-                };
+            // 제품명 + 구매 의사 표현이 있을 때
+            if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래") || normalized.includes("구매")) {
+                
+                // 1. Cafe24 API로 진짜 상품 찾기
+                const realProduct = await searchProductOnCafe24(product);
+                
+                if (realProduct) {
+                    // 정확한 상품 찾음
+                    return {
+                        text: `찾으시는 <b>'${realProduct.name}'</b> 상품을 찾았습니다! ✨<br><br>
+                        <img src="${realProduct.image}" style="max-width:150px; border-radius:10px; margin-bottom:10px;"><br>
+                        판매가: <b>${Number(realProduct.price).toLocaleString()}원</b><br><br>
+                        아래 버튼을 눌러 상세 페이지로 이동해 보세요. 👇<br>
+                        <a href="${realProduct.url}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center; margin-top:5px;">
+                           🛍️ 상품 상세 보기
+                        </a>`
+                    };
+                } else {
+                    // API 검색 실패 시 -> 검색 결과 페이지로 Fallback
+                    const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(product)}`;
+                    return {
+                        text: `<b>'${product}'</b> 관련 제품 정보를 찾고 계신가요?<br>아래 링크에서 다양한 옵션을 확인해 보세요! 👇<br><br>
+                        <a href="${searchUrl}" target="_blank" style="color:#58b5ca; font-weight:bold;">🔍 ${product} 검색 결과 더보기</a>`
+                    };
+                }
             }
         }
     }
@@ -415,7 +457,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (나머지 파일 API 유지)
+// (이하 나머지 파일 업로드 등의 API는 기존과 동일)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
