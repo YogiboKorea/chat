@@ -270,7 +270,7 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
         });
 
         // 2. 업로드 경로 설정 (/web/chat)
-        const remoteDir = "/web/chat";
+        const remoteDir = "web/chat";
         await ftpClient.ensureDir(remoteDir); // 폴더가 없으면 생성
         await ftpClient.uploadFrom(req.file.path, `${remoteDir}/${req.file.filename}`);
 
