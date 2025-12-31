@@ -59,18 +59,20 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// 🤖 시스템 프롬프트
+// 🤖 시스템 프롬프트 (할루시네이션 방지 강화)
 let currentSystemPrompt = `
 1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 전문 상담원입니다.
 2. 태도: 고객에게 공감하며 따뜻하고 친절한 말투("~해요", "~인가요?")를 사용하세요.
 3. 절대 원칙: 
    - 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
    - [참고 정보]에 없는 내용은 절대 지어내지 말고, "죄송합니다. 해당 정보는 아직 학습되지 않았습니다."라고 솔직하게 말하세요.
-4. 중요 지식: 
-   - '빈백(Beanbag)'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 주력 상품인 '소파/바디필로우'을 의미합니다. 
-   - 절대 빈백을 가방이나 패션 잡화로 설명하지 마세요.
+4. 중요 지식 (오답 방지): 
+   - '빈백(Beanbag)'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 주력 상품인 '소파' 또는 '바디필로우'를 의미합니다. 
+   - 절대 빈백을 가방, 핸드백, 패션 잡화로 설명하지 마세요.
    - 요기보의 빈백은 몸의 굴곡에 맞춰 변형되는 마법 같은 소파입니다.
-5. 포맷: HTML 태그(<img...>, <iframe...>)가 있다면 변경하지 말고 그대로 출력하세요.
+5. 포맷: 
+   - 링크는 [제목](주소) 형식이나 주소(https://...) 그대로 적어주세요.
+   - HTML 태그(<img...>, <iframe...>)가 있다면 변경하지 말고 그대로 출력하세요.
 `;
 
 // ========== [상수: HTML 템플릿] ==========
@@ -104,7 +106,7 @@ const LOGIN_BTN_HTML = `
 </div>
 `;
 
-// ========== [데이터 로딩: companyData.json] ==========
+// ========== [데이터 로딩] ==========
 const companyDataPath = path.join(__dirname, "json", "companyData.json");
 let companyData = {};
 try {
@@ -140,14 +142,12 @@ async function updateSearchableData() {
     await client.connect();
     const db = client.db(DB_NAME);
 
-    // postItNotes 컬렉션에서 데이터 가져오기
     const notes = await db.collection("postItNotes").find({}).toArray();
     const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
     
     allSearchableData = [...staticFaqList, ...dynamic];
     console.log(`✅ 검색 데이터 갱신 완료: 총 ${allSearchableData.length}개 로드됨`);
 
-    // 최신 시스템 프롬프트 적용
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) {
         currentSystemPrompt = prompts[0].content; 
@@ -155,7 +155,6 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [RAG 로직 2] 검색
 // ✅ [RAG 로직 2] 검색 (기준 강화)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
@@ -167,26 +166,21 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 질문과 데이터 질문이 아주 유사하면 큰 점수
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
-    
-    // 키워드 매칭 점수
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 15; // 질문 매칭 가중치 높임
+      if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
     return { ...item, score };
   });
 
-  // 점수 내림차순 정렬 후 상위 3개 추출
-  // ★ 수정: 기준 점수를 3점에서 10점으로 상향 (엄격하게)
-  return scored.filter(i => i.score >= 6).sort((a, b) => b.score - a.score).slice(0, 3);
+  // 정확도를 위해 10점 이상만 가져옵니다.
+  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 // ✅ [GPT 호출] (창의력 0 설정)
 async function getGPT3TurboResponse(input, context = []) {
-  // 검색된 정보가 하나도 없으면 바로 모른다고 처리 (GPT 비용 절약 + 환각 방지)
   if (context.length === 0) {
       return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 고객센터(02-557-0920)로 문의해주시면 친절히 안내해 드리겠습니다.";
   }
@@ -201,8 +195,8 @@ async function getGPT3TurboResponse(input, context = []) {
           { role: "system", content: sys }, 
           { role: "user", content: input }
       ],
-      temperature: 0, // ★ 핵심: 0에 가까울수록 사실 기반, 1에 가까울수록 아무말 대잔치
-      max_tokens: 500 // 답변 길이 제한
+      temperature: 0, 
+      max_tokens: 500
     }, { 
         headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } 
     });
@@ -210,23 +204,18 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [유틸 함수] ==========
+// ========== [★수정] 유틸 함수 (서버는 텍스트를 건드리지 않음) ==========
 function formatResponseText(text) {
-  if (!text) return "";
-  let formatted = text;
-  formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
-      return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
-  });
-  formatted = formatted.replace(/(?<!href="|">)(https?:\/\/[^\s<)]+)/g, (url) => {
-      return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${url}</a>`;
-  });
-  return formatted;
+  // 프론트엔드에서 linkify 함수가 처리하므로, 서버는 텍스트 그대로 반환합니다.
+  // 이렇게 해야 프론트엔드 타이핑 효과와 충돌하지 않습니다.
+  return text || "";
 }
+
 function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없나요/g, "없어요").trim(); }
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [API 1] PDF 업로드 및 분석 (RAG 학습) ==========
+// ========== [API] PDF 업로드 ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -235,61 +224,42 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         await client.connect();
         const db = client.db(DB_NAME);
 
-        // 1. PDF 파일 처리
         if (req.file && req.file.mimetype === 'application/pdf') {
             const dataBuffer = fs.readFileSync(req.file.path);
-            const data = await pdfParse(dataBuffer); // pdf-extraction 사용
-            
-            // 텍스트 정제
+            const data = await pdfParse(dataBuffer);
             const cleanText = data.text.replace(/\n\n+/g, '\n').trim();
-            
-            // 500자 단위 Chunking
             const chunkSize = 500; 
             const chunks = [];
             for (let i = 0; i < cleanText.length; i += chunkSize) {
                 chunks.push(cleanText.substring(i, i + chunkSize));
             }
-
-            // DB 저장
             const docs = chunks.map((chunk, index) => ({
                 category: "pdf-knowledge",
                 question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
                 answer: chunk, 
                 createdAt: new Date()
             }));
-
-            if (docs.length > 0) {
-                await db.collection("postItNotes").insertMany(docs);
-            }
-
-            fs.unlink(req.file.path, () => {}); // 임시파일 삭제
+            if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
+            fs.unlink(req.file.path, () => {});
             await updateSearchableData();
-            
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
         }
 
-        // 2. 역할 설정 (Text)
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
-            await db.collection("systemPrompts").insertOne({
-                role, content: fullPrompt, createdAt: new Date()
-            });
+            await db.collection("systemPrompts").insertOne({ role, content: fullPrompt, createdAt: new Date() });
             currentSystemPrompt = fullPrompt;
             return res.json({ message: "LLM 역할 설정이 완료되었습니다." });
         }
-
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
-
     } catch (e) { 
         console.error(e); 
         if (req.file) fs.unlink(req.file.path, () => {});
         res.status(500).json({ error: e.message }); 
-    } finally { 
-        await client.close(); 
-    }
+    } finally { await client.close(); }
 });
 
-// ========== [API 2] 이미지 지식 등록 (FTP 업로드) ==========
+// ========== [API] 이미지 등록 ==========
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -298,40 +268,19 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
 
     try {
-        // [안전장치] FTP 주소 보정
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
+        await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
 
-        // 1. FTP 접속
-        await ftpClient.access({
-            host: cleanFtpHost,
-            user: YOGIBO_FTP_ID,
-            password: YOGIBO_FTP_PW,
-            secure: false
-        });
+        try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } 
+        catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
 
-        // 2. 경로 진입 (web -> chat 순차 이동)
-        try {
-            await ftpClient.ensureDir("web");
-            await ftpClient.ensureDir("chat");
-        } catch (dirErr) {
-            console.log("web 폴더 진입 실패, www로 재시도");
-            await ftpClient.cd("/");
-            await ftpClient.ensureDir("www");
-            await ftpClient.ensureDir("chat");
-        }
-
-        // 3. 업로드
         await ftpClient.uploadFrom(req.file.path, req.file.filename);
-
-        // 4. URL 생성
         const remotePath = "web/chat"; 
         const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
         const imageUrl = `${publicBase}/${remotePath}/${req.file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
-        // 5. DB 저장
         await client.connect();
         const db = client.db(DB_NAME);
-        
         await db.collection("postItNotes").insertOne({
             category: "image-knowledge",
             question: keyword,
@@ -339,83 +288,61 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
             createdAt: new Date()
         });
 
-        fs.unlink(req.file.path, () => {}); // 임시파일 삭제
+        fs.unlink(req.file.path, () => {});
         ftpClient.close();
         await updateSearchableData();
-
         res.json({ message: "이미지 지식 등록 완료" });
-
     } catch (e) {
         console.error("FTP 업로드 오류:", e);
         if (req.file) fs.unlink(req.file.path, () => {});
         ftpClient.close();
         res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
-    } finally {
-        await client.close();
-    }
+    } finally { await client.close(); }
 });
 
-// ========== [API 3] 게시글 수정 통합 (텍스트 + 이미지 교체) ==========
+// ========== [API] 게시글 수정 통합 ==========
 app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     const { id } = req.params;
     const { question, answer } = req.body;
     const file = req.file;
-
     const client = new MongoClient(MONGODB_URI);
     const ftpClient = new ftp.Client();
 
     try {
         await client.connect();
         const db = client.db(DB_NAME);
-        
         let newAnswer = answer;
 
-        // ★ 새 이미지가 있으면 FTP 업로드 진행 후 답변 교체
         if (file) {
             const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
-            await ftpClient.access({
-                host: cleanFtpHost,
-                user: YOGIBO_FTP_ID,
-                password: YOGIBO_FTP_PW,
-                secure: false
-            });
-
-            // 경로 진입
+            await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
             try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); }
             catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
 
             await ftpClient.uploadFrom(file.path, file.filename);
-
             const remotePath = "web/chat";
             const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
             const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
             newAnswer = `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
-
             fs.unlink(file.path, () => {});
             ftpClient.close();
         }
 
-        // DB 업데이트
         await db.collection("postItNotes").updateOne(
             { _id: new ObjectId(id) },
             { $set: { question: question, answer: newAnswer, updatedAt: new Date() } }
         );
-
         await updateSearchableData();
         res.json({ message: "수정 완료" });
-
     } catch (e) {
-        console.error("수정 오류:", e);
         if (file) fs.unlink(file.path, () => {});
         ftpClient.close();
         res.status(500).json({ error: e.message });
-    } finally {
-        await client.close();
-    }
+    } finally { await client.close(); }
 });
 
-// ========== [API 4] 게시글 삭제 (FTP 이미지 삭제 포함) ==========
+// ========== [API] 게시글 삭제 ==========
 app.delete("/postIt/:id", async(req, res) => { 
     const { id } = req.params;
     const client = new MongoClient(MONGODB_URI);
@@ -424,53 +351,30 @@ app.delete("/postIt/:id", async(req, res) => {
     try {
         await client.connect();
         const db = client.db(DB_NAME);
-
-        // 1. 삭제할 게시글 조회
         const targetPost = await db.collection("postItNotes").findOne({ _id: new ObjectId(id) });
 
         if (targetPost) {
-            // 2. 이미지가 있으면 FTP에서 삭제 시도
             const imgMatch = targetPost.answer && targetPost.answer.match(/src="([^"]+)"/);
-            
             if (imgMatch) {
                 const fullUrl = imgMatch[1];
-                const filename = fullUrl.split('/').pop(); // URL에서 파일명 추출
-
+                const filename = fullUrl.split('/').pop();
                 if (filename) {
                     try {
                         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
                         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
-                        
-                        // web/chat에서 삭제 시도, 실패시 www/chat 시도
-                        await ftpClient.remove(`web/chat/${filename}`)
-                            .catch(async () => {
-                                await ftpClient.remove(`www/chat/${filename}`).catch(() => {});
-                            });
-                            
-                        console.log(`FTP 파일 삭제 시도 완료: ${filename}`);
+                        await ftpClient.remove(`web/chat/${filename}`).catch(async () => { await ftpClient.remove(`www/chat/${filename}`).catch(() => {}); });
                         ftpClient.close();
-                    } catch (ftpErr) {
-                        console.error("FTP 삭제 중 오류 (DB는 삭제함):", ftpErr.message);
-                        ftpClient.close();
-                    }
+                    } catch (ftpErr) { ftpClient.close(); }
                 }
             }
         }
-
-        // 3. DB 삭제
         await db.collection("postItNotes").deleteOne({ _id: new ObjectId(id) });
         await updateSearchableData();
         res.json({ message: "OK" });
-
-    } catch(e) { 
-        console.error(e);
-        res.status(500).json({ error: e.message }); 
-    } finally {
-        await client.close();
-    }
+    } catch(e) { res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
-// ========== [Cafe24 API 관련 함수] ==========
+// ========== [Cafe24 API] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -480,6 +384,7 @@ async function apiRequest(method, url, data = {}, params = {}) {
       throw error;
     }
 }
+// (기존 Cafe24 관련 함수들 - getOrderShippingInfo, getShipmentDetail 등은 그대로 유지됨)
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
@@ -507,7 +412,7 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 기반 답변 로직] ==========
+// ========== [규칙 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
@@ -600,25 +505,25 @@ app.post("/chat", async (req, res) => {
 
     const docs = findRelevantContent(message);
     let gptAnswer = await getGPT3TurboResponse(message, docs);
-    gptAnswer = formatResponseText(gptAnswer);
-
+    
     // [구조대] GPT가 놓친 영상/이미지 복구
     if (docs.length > 0) {
         const bestDoc = docs[0];
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
             const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g);
-            if (iframes) gptAnswer += "\n<br><br>" + iframes.join("\n<br>");
+            if (iframes) gptAnswer += "\n" + iframes.join("\n");
         }
         if (bestDoc.a.includes("<img") && !gptAnswer.includes("<img")) {
             const imgs = bestDoc.a.match(/<img.*?>/g);
-            if (imgs) gptAnswer += "\n<br><br>" + imgs.join("\n<br>");
+            if (imgs) gptAnswer += "\n" + imgs.join("\n");
         }
     }
 
-    if (docs.length === 0) gptAnswer += FALLBACK_MESSAGE_HTML;
+    // ★ 서버는 텍스트를 건드리지 않고 그대로 보냅니다 (프론트엔드 linkify 활용)
+    const finalAnswer = formatResponseText(gptAnswer);
 
-    await saveConversationLog(memberId, message, gptAnswer);
-    res.json({ text: gptAnswer, videoHtml: null });
+    await saveConversationLog(memberId, message, finalAnswer);
+    res.json({ text: finalAnswer, videoHtml: null });
 
   } catch (e) {
     console.error(e);
