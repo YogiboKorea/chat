@@ -335,7 +335,7 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
         await db.collection("postItNotes").insertOne({
             category: "image-knowledge",
             question: keyword,
-            answer: `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
+            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
             createdAt: new Date()
         });
 
@@ -390,7 +390,7 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
             const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
             const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
-            newAnswer = `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
+            newAnswer = `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
 
             fs.unlink(file.path, () => {});
             ftpClient.close();
