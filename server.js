@@ -11,7 +11,7 @@ const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
 const dayjs = require('dayjs');
-const pdfParse = require('pdf-parse'); // [추가됨] PDF 분석용
+const pdfParse = require('pdf-parse');
 
 // ✅ [중요] .env 파일 경로 명시적 지정
 require("dotenv").config({ path: path.join(__dirname, ".env") });
