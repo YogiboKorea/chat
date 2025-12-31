@@ -44,25 +44,22 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ★ [핵심 수정] 시스템 프롬프트: 모르는 건 절대 아는 척 금지 + 암호(NO_CONTEXT_FOUND) 사용
+// ★ [핵심 수정] 시스템 프롬프트: 할루시네이션 원천 봉쇄 & 용어 정의
 let currentSystemPrompt = `
 1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 전문 상담원입니다.
 2. 태도: 고객에게 공감하며 따뜻하고 친절한 말투("~해요", "~인가요?")를 사용하세요.
 3. ★ 절대 원칙 (가장 중요): 
    - 반드시 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
-   - [참고 정보]에 없는 내용은 "NO_CONTEXT_FOUND"라고 출력하세요.
-4. 중요 지식 (오답 방지): 
-   - '빈백(Beanbag)'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 주력 상품인 '소파' 또는 '쿠션'을 의미합니다. 
-   - 절대 빈백을 가방, 핸드백, 패션 잡화로 설명하지 마세요.
-5. ★ 용어 정의 (동음이의어 주의):
-   - '충전': 요기보 제품은 전자기기가 아닙니다. 따라서 '충전'은 '배터리/전기 충전'이 아니라, 꺼진 쿠션을 되살리는 **'비즈(충전재) 보충/리필'**을 의미합니다.
-   - 사용자가 "충전 언제 해요?"라고 물으면, "배터리" 이야기를 하지 말고 "쿠션이 푹 꺼졌을 때 비즈를 보충(리필)해주시면 됩니다."라고 답변하세요.
-6. 포맷: 
+   - [참고 정보]에 없는 내용(예: 롤 메이트, 전자기기 등)을 물어보면, 절대 지어내지 말고 오직 "NO_CONTEXT_FOUND" 라고만 출력하세요.
+4. ★ 용어 및 사실 관계 정의 (필독):
+   - '충전': 요기보 제품은 전자기기가 아닙니다. 따라서 '충전'은 배터리 충전이 아니라, 꺼진 쿠션을 되살리는 **'비즈(충전재) 보충/리필'**을 의미합니다. 절대 전기나 배터리 이야기를 하지 마세요.
+   - '빈백': 가방이 아니라 사람이 앉는 '소파'입니다.
+5. 포맷: 
    - 링크는 [버튼명](URL) 형식으로 작성하세요.
-   - HTML 태그는 변경하지 말고 그대로 출력하세요.
+   - HTML 태그(<img...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== 상담사 연결 링크 (클래스 기반) ==========
+// ========== 상담사 연결 링크 (스타일 제거, 클래스 사용) ==========
 const COUNSELOR_LINKS_HTML = `
 <div class="consult-container">
   <p style="font-weight:bold; margin-bottom:10px; font-size:14px;">👩‍💻 상담사 연결이 필요하신가요?</p>
@@ -76,7 +73,7 @@ const COUNSELOR_LINKS_HTML = `
 </div>
 `;
 
-// ★ [수정] 모르는 질문일 때 나가는 기본 멘트
+// [수정] 모르는 질문일 때 나가는 기본 멘트
 const FALLBACK_MESSAGE_HTML = `
 <div style="margin-top: 15px;">
   <span style="font-size:14px; color:#333; font-weight:bold;">죄송합니다. 문의하신 내용에 대한 정확한 정보가 확인되지 않습니다. 😥</span>
@@ -92,7 +89,6 @@ const LOGIN_BTN_HTML = `
 </div>
 `;
 
-// (이하 DB 연결 및 유틸리티 함수들은 동일)
 const companyDataPath = path.join(__dirname, "json", "companyData.json");
 let companyData = {};
 try { if (fs.existsSync(companyDataPath)) companyData = JSON.parse(fs.readFileSync(companyDataPath, "utf-8")); } catch (e) {}
@@ -132,26 +128,33 @@ async function updateSearchableData() {
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
+
+  console.log(`🔍 검색 시작: "${msg}"`);
+
   const scored = allSearchableData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+    
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
+
     const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
     dbKeywords.forEach(dbK => { if (msg.includes(dbK)) score += 10; });
+
     return { ...item, score };
   });
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
+
+  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ✅ [수정] GPT 호출 (NO_CONTEXT_FOUND 처리를 위해 약간 수정)
+// ✅ [수정] GPT 호출 (NO_CONTEXT_FOUND 암호 처리)
 async function getGPT3TurboResponse(input, context = []) {
-  if (context.length === 0) return "NO_CONTEXT_FOUND"; // 검색 결과 없으면 바로 암호 리턴
+  if (context.length === 0) return "NO_CONTEXT_FOUND"; 
 
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
   const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${txt}`;
@@ -170,11 +173,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ... (PDF, 이미지 업로드, 수정, 삭제 API는 기존과 동일하여 생략, 그대로 두시면 됩니다) ...
-// (기존 코드의 app.post('/chat_send'...), app.post('/upload_knowledge_image'...) 등등 유지)
-// 여기서는 지면 관계상 생략하지만, 실제 파일에는 꼭 있어야 합니다.
-// (이전 답변의 API 코드들을 그대로 복사해서 사용하세요.)
-
+// ... (PDF, 이미지 업로드, 수정, 삭제 API는 기존과 동일하게 유지) ...
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -287,7 +286,6 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
@@ -295,7 +293,7 @@ async function findAnswer(userInput, memberId) {
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // (배송 로직 생략 - 그대로 사용)
+    // (배송 조회 로직 유지)
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -322,7 +320,6 @@ async function findAnswer(userInput, memberId) {
           } catch (e) { return { text: "조회 실패." }; }
         } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-    // (기타 covering, sizeInfo 로직 생략 - 그대로 사용)
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -391,7 +388,6 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (로그 저장, 엑셀 다운로드, 서버 시작 코드는 동일)
 async function saveConversationLog(mid, uMsg, bRes) {
     const client = new MongoClient(MONGODB_URI);
     try { await client.connect(); await client.db(DB_NAME).collection("conversationLogs").updateOne({ memberId: mid || null, date: new Date().toISOString().split("T")[0] }, { $push: { conversation: { userMessage: uMsg, botResponse: bRes, createdAt: new Date() } } }, { upsert: true }); } finally { await client.close(); }
