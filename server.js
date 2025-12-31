@@ -218,53 +218,6 @@ async function apiRequest(method, url, data = {}, params = {}) {
     }
 }
 
-// ========== [★신규/수정] Cafe24 스마트 상품 검색 (필터링 적용) ==========
-async function searchProductOnCafe24(keyword) {
-    try {
-        // 1. 검색어 보정 (정확도 향상)
-        let searchKeyword = keyword;
-        // 주요 제품명일 경우 앞에 '요기보'를 붙여서 정확도 UP
-        if (["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라"].includes(keyword)) {
-            searchKeyword = `요기보 ${keyword}`;
-        }
-
-        // 2. 여러 개 가져오기 (limit: 5)
-        const response = await apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products`, {}, {
-            product_name: searchKeyword,
-            display: 'T',
-            selling: 'T',
-            limit: 5 // 후보군 5개 조회
-        });
-
-        if (response.products && response.products.length > 0) {
-            // 3. [핵심] 액세서리 제외 필터링
-            // 커버, 이너, 리필 등이 없는 '순수 본품'을 우선 찾음
-            const exclusionKeywords = ["커버", "이너", "리필", "충전재", "세탁", "악세서리", "증정"];
-            
-            let bestMatch = response.products.find(p => {
-                const name = p.product_name;
-                // 제외 키워드가 하나라도 포함되어 있으면 Skip
-                return !exclusionKeywords.some(badWord => name.includes(badWord));
-            });
-
-            // 본품을 못 찾았으면, 그냥 첫 번째 검색 결과 사용 (Fallback)
-            if (!bestMatch) bestMatch = response.products[0];
-
-            const detailUrl = `https://yogibo.kr/product/detail.html?product_no=${bestMatch.product_no}`;
-            return {
-                name: bestMatch.product_name,
-                url: detailUrl,
-                price: bestMatch.price,
-                image: bestMatch.tiny_image
-            };
-        }
-        return null;
-    } catch (e) {
-        console.error("Cafe24 상품 검색 실패:", e.message);
-        return null;
-    }
-}
-
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
@@ -312,7 +265,7 @@ async function findAnswer(userInput, memberId) {
         };
     }
 
-    // ★ [3. 수정됨] Cafe24 스마트 상품 검색
+    // ★ [3. 수정됨] 안전한 검색 결과 URL 제공 (API 사용 X)
     const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라"];
     
     for (const product of productKeywords) {
@@ -320,26 +273,16 @@ async function findAnswer(userInput, memberId) {
             // 제품명 + 구매 의사 표현
             if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래") || normalized.includes("구매")) {
                 
-                // 1. Cafe24 API로 진짜 상품 찾기 (필터링 적용됨)
-                const realProduct = await searchProductOnCafe24(product);
+                // 검색어에 '요기보'를 붙여서 더 정확한 결과를 유도
+                const searchKeyword = `요기보 ${product}`;
+                const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(searchKeyword)}`;
                 
-                if (realProduct) {
-                    return {
-                        text: `찾으시는 <b>'${realProduct.name}'</b> 상품을 찾았습니다! ✨<br><br>
-                        <img src="${realProduct.image}" style="max-width:150px; border-radius:10px; margin-bottom:10px;"><br>
-                        판매가: <b>${Number(realProduct.price).toLocaleString()}원</b><br><br>
-                        아래 버튼을 눌러 상세 페이지로 이동해 보세요. 👇<br>
-                        <a href="${realProduct.url}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center; margin-top:5px;">
-                           🛍️ 상품 상세 보기
-                        </a>`
-                    };
-                } else {
-                    const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(product)}`;
-                    return {
-                        text: `<b>'${product}'</b> 관련 제품 정보를 찾고 계신가요?<br>아래 링크에서 다양한 옵션을 확인해 보세요! 👇<br><br>
-                        <a href="${searchUrl}" target="_blank" style="color:#58b5ca; font-weight:bold;">🔍 ${product} 검색 결과 더보기</a>`
-                    };
-                }
+                return {
+                    text: `<b>'${product}'</b> 관련 제품 정보를 찾고 계신가요?<br>아래 링크에서 원하시는 색상과 옵션을 확인해 보세요! 👇<br><br>
+                    <a href="${searchUrl}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center; text-decoration:none;">
+                       🔍 ${product} 검색 결과 보기
+                    </a>`
+                };
             }
         }
     }
@@ -467,7 +410,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (이하 나머지 API는 기존과 동일)
+// (이하 나머지 파일 업로드 등의 API는 기존과 동일)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
