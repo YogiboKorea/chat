@@ -11,7 +11,7 @@ const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
 const dayjs = require('dayjs');
-const pdfParse = require('pdf-parse');
+const pdfParse = require('pdf-extraction'); // ✅ 이걸로 변경 (변수명은 그대로 pdfParse 써도 됨)
 
 // ✅ [중요] .env 파일 경로 명시적 지정
 require("dotenv").config({ path: path.join(__dirname, ".env") });

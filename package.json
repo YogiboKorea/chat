@@ -27,6 +27,6 @@
     "nodemailer": "^7.0.3",
     "nodemon": "^3.1.9",
     "openai": "^4.85.3",
-    "pdf-parse": "^1.1.1"
+    "pdf-extraction": "^1.0.2"
   }
 }
