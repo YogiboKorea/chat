@@ -9,6 +9,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
+const dayjs = require('dayjs');
 const pdfParse = require('pdf-extraction');
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -30,6 +31,7 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+// ✅ 파일 업로드 설정
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
@@ -39,8 +41,7 @@ const upload = multer({
 });
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__dirname, 'uploads'));
 
-// ★ [핵심 수정] 여기에 이 변수가 꼭 있어야 합니다!
-let pendingCoveringContext = false; 
+let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
 let currentSystemPrompt = `
@@ -56,7 +57,6 @@ let currentSystemPrompt = `
    - 참고 정보에 이미지가 있다면, 굳이 텍스트로 상세 스펙(길이, 무게 등)을 설명하려 하지 말고 "요청하신 이미지 정보입니다."라고만 하고 이미지를 보여주세요.
    - 이미지를 보여줄 때는 HTML 태그(<img...>)를 변경하지 말고 그대로 출력하세요.
 `;
-
 
 // ========== 상담사 연결 링크 ==========
 const COUNSELOR_LINKS_HTML = `
@@ -139,6 +139,7 @@ function findRelevantContent(msg) {
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
 
+    // 역방향 검색 (DB키워드가 질문에 포함되는지)
     const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
     dbKeywords.forEach(dbK => {
         if (msg.includes(dbK)) score += 10;
@@ -167,24 +168,45 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
+// ========== [API] PDF 업로드 (한글 깨짐 방지 추가) ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect();
         const db = client.db(DB_NAME);
+
+        // [★추가] 한글 파일명 깨짐 방지 (Latin1 -> UTF8 변환)
+        if (req.file) {
+            req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+        }
+
         if (req.file && req.file.mimetype === 'application/pdf') {
             const dataBuffer = fs.readFileSync(req.file.path);
             const data = await pdfParse(dataBuffer);
-            const cleanText = data.text.replace(/\n\n+/g, '\n').trim();
+            
+            // 텍스트 정제 (불필요한 공백 제거)
+            const cleanText = data.text.replace(/\n\n+/g, '\n').replace(/\s+/g, ' ').trim();
+            
             const chunkSize = 500; 
             const chunks = [];
-            for (let i = 0; i < cleanText.length; i += chunkSize) chunks.push(cleanText.substring(i, i + chunkSize));
-            const docs = chunks.map((chunk, index) => ({ category: "pdf-knowledge", question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, answer: chunk, createdAt: new Date() }));
+            for (let i = 0; i < cleanText.length; i += chunkSize) {
+                chunks.push(cleanText.substring(i, i + chunkSize));
+            }
+            const docs = chunks.map((chunk, index) => ({
+                category: "pdf-knowledge",
+                question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
+                answer: chunk, 
+                createdAt: new Date()
+            }));
+            
             if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
-            fs.unlink(req.file.path, () => {}); await updateSearchableData();
+            
+            fs.unlink(req.file.path, () => {});
+            await updateSearchableData();
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
         }
+
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({ role, content: fullPrompt, createdAt: new Date() });
@@ -192,25 +214,56 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             return res.json({ message: "LLM 역할 설정이 완료되었습니다." });
         }
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
-    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); res.status(500).json({ error: e.message }); } finally { await client.close(); }
+    } catch (e) { 
+        console.error(e); 
+        if (req.file) fs.unlink(req.file.path, () => {});
+        res.status(500).json({ error: e.message }); 
+    } finally { await client.close(); }
 });
 
+// ========== [API] 이미지 등록 (한글 깨짐 방지 추가) ==========
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
     const ftpClient = new ftp.Client();
+
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
+
+    // [★추가] 한글 파일명 깨짐 방지
+    req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+
     try {
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
-        try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
-        await ftpClient.uploadFrom(req.file.path, req.file.filename);
-        const remotePath = "web/chat"; const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
-        const imageUrl = `${publicBase}/${remotePath}/${req.file.filename}`.replace(/([^:]\/)\/+/g, '$1');
-        await client.connect(); await client.db(DB_NAME).collection("postItNotes").insertOne({ category: "image-knowledge", question: keyword, answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`, createdAt: new Date() });
-        fs.unlink(req.file.path, () => {}); ftpClient.close(); await updateSearchableData();
+        try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } 
+        catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
+
+        // FTP 업로드 시에는 파일명 충돌 방지를 위해 timestamp 사용 (깨짐 방지에도 도움됨)
+        const safeFilename = `${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
+        await ftpClient.uploadFrom(req.file.path, safeFilename);
+        
+        const remotePath = "web/chat"; 
+        const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
+        const imageUrl = `${publicBase}/${remotePath}/${safeFilename}`.replace(/([^:]\/)\/+/g, '$1');
+
+        await client.connect();
+        await db.collection("postItNotes").insertOne({
+            category: "image-knowledge",
+            question: keyword,
+            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
+            createdAt: new Date()
+        });
+
+        fs.unlink(req.file.path, () => {});
+        ftpClient.close();
+        await updateSearchableData();
         res.json({ message: "이미지 지식 등록 완료" });
-    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); ftpClient.close(); res.status(500).json({ error: e.message }); } finally { await client.close(); }
+    } catch (e) {
+        console.error("FTP 오류:", e);
+        if (req.file) fs.unlink(req.file.path, () => {});
+        ftpClient.close();
+        res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
+    } finally { await client.close(); }
 });
 
 app.put("/postIt/:id", upload.single('image'), async (req, res) => {
@@ -219,12 +272,17 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     try {
         await client.connect(); const db = client.db(DB_NAME); let newAnswer = answer;
         if (file) {
+            // [★추가] 수정 시에도 한글 처리
+            file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+            const safeFilename = `${Date.now()}_edit.jpg`;
+
             const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
             await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
             try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
-            await ftpClient.uploadFrom(file.path, file.filename);
+            
+            await ftpClient.uploadFrom(file.path, safeFilename);
             const remotePath = "web/chat"; const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
-            const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
+            const imageUrl = `${publicBase}/${remotePath}/${safeFilename}`.replace(/([^:]\/)\/+/g, '$1');
             newAnswer = `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
             fs.unlink(file.path, () => {}); ftpClient.close();
         }
