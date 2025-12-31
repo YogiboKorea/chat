@@ -25,10 +25,10 @@ const {
   DB_NAME, MONGODB_URI, CAFE24_MALLID, OPEN_URL, API_KEY,
   FINETUNED_MODEL = "gpt-3.5-turbo", CAFE24_API_VERSION = "2024-06-01",
   PORT = 5000, 
-  FTP_PUBLIC_BASE, // 예: https://yogibo.kr
-  YOGIBO_FTP,      // 예: yogibo.ftp.cafe24.com
-  YOGIBO_FTP_ID,   // FTP 아이디
-  YOGIBO_FTP_PW    // FTP 패스워드
+  FTP_PUBLIC_BASE, 
+  YOGIBO_FTP,      
+  YOGIBO_FTP_ID,   
+  YOGIBO_FTP_PW    
 } = process.env;
 
 let accessToken = ACCESS_TOKEN;
@@ -41,16 +41,15 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 파일 업로드 설정 (Multer - 임시 저장용, 50MB 제한)
+// ✅ 파일 업로드 설정 (Multer - 50MB)
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
         filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname}`)
     }),
-    limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+    limits: { fileSize: 50 * 1024 * 1024 } 
 });
 
-// uploads 폴더 자동 생성
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
     fs.mkdirSync(path.join(__dirname, 'uploads'));
 }
@@ -59,32 +58,43 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// 🤖 시스템 프롬프트 (할루시네이션 방지 + 이미지 설명 제한 강화)
+// 🤖 시스템 프롬프트 (할루시네이션 방지 강화)
 let currentSystemPrompt = `
 1. 역할: 당신은 글로벌 라이프스타일 브랜드 '요기보(Yogibo)'의 전문 상담원입니다.
 2. 태도: 고객에게 공감하며 따뜻하고 친절한 말투("~해요", "~인가요?")를 사용하세요.
 3. 절대 원칙: 
    - 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
-   - [참고 정보]에 없는 수치(사이즈, 가격 등)나 내용은 절대 지어내지 말고, "죄송합니다. 해당 정보는 아직 학습되지 않았습니다."라고 솔직하게 말하세요.
+   - [참고 정보]에 없는 내용은 절대 지어내지 말고, "죄송합니다. 해당 정보는 아직 학습되지 않았습니다."라고 솔직하게 말하세요.
 4. 중요 지식 (오답 방지): 
    - '빈백(Beanbag)'은 가방(Bag)이나 지갑이 아닙니다. 요기보의 주력 상품인 '소파' 또는 '바디필로우'를 의미합니다. 
    - 절대 빈백을 가방, 핸드백, 패션 잡화로 설명하지 마세요.
+   - 요기보의 빈백은 몸의 굴곡에 맞춰 변형되는 마법 같은 소파입니다.
 5. 이미지 답변 규칙:
    - 참고 정보에 이미지가 있다면, 굳이 텍스트로 상세 스펙(길이, 무게 등)을 설명하려 하지 말고 "요청하신 이미지 정보입니다."라고만 하고 이미지를 보여주세요.
    - 이미지를 보여줄 때는 HTML 태그(<img...>)를 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== [상수: HTML 템플릿] ==========
+// ========== [★복구됨] 상담사 연결 링크 템플릿 ==========
 const COUNSELOR_LINKS_HTML = `
-<div style="margin-top: 15px;">
-  📮 <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" style="color:#3b1e1e; font-weight:bold; text-decoration:underline; cursor:pointer;">카카오플친 연결하기 (팝업)</a><br>
-  📮 <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" style="color:#03c75a; font-weight:bold; text-decoration:underline; cursor:pointer;">네이버톡톡 연결하기 (팝업)</a>
+<div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed #eee;">
+  <p style="font-weight:bold; margin-bottom:10px; font-size:14px;">👩‍💻 상담사 연결이 필요하신가요?</p>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" 
+       style="display:flex; align-items:center; gap:5px; background:#fae100; color:#371d1e; padding:8px 12px; border-radius:8px; text-decoration:none; font-size:13px; font-weight:bold;">
+       <i class="fa-solid fa-comment"></i> 카카오톡 상담
+    </a>
+    <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" 
+       style="display:flex; align-items:center; gap:5px; background:#03c75a; color:#fff; padding:8px 12px; border-radius:8px; text-decoration:none; font-size:13px; font-weight:bold;">
+       <i class="fa-solid fa-comments"></i> 네이버 톡톡
+    </a>
+  </div>
+  <p style="font-size:11px; color:#999; margin-top:8px;">운영시간: 평일 10:00 ~ 17:30 (점심 12:00~13:00)</p>
 </div>
 `;
 
 const FALLBACK_MESSAGE_HTML = `
-<div style="margin-top: 20px; border-top: 1px dashed #ddd; padding-top: 10px;">
-  <span style="font-size:13px; color:#888;">원하시는 답변을 찾지 못하셨나요?</span>
+<div style="margin-top: 15px;">
+  <span style="font-size:13px; color:#666;">원하시는 답변을 찾지 못하셨나요?</span>
   ${COUNSELOR_LINKS_HTML}
 </div>
 `;
@@ -92,14 +102,8 @@ const FALLBACK_MESSAGE_HTML = `
 const LOGIN_BTN_HTML = `
 <div style="margin-top:15px;">
   <a href="/member/login.html" style="
-    display: inline-block;
-    padding: 8px 16px;
-    background-color: #58b5ca;
-    color: #ffffff;
-    text-decoration: none;
-    border-radius: 20px;
-    font-weight: bold;
-    font-size: 13px;
+    display: inline-block; padding: 8px 16px; background-color: #58b5ca; color: #ffffff;
+    text-decoration: none; border-radius: 20px; font-weight: bold; font-size: 13px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
   ">로그인 하러 가기 →</a>
 </div>
@@ -174,14 +178,14 @@ function findRelevantContent(msg) {
     return { ...item, score };
   });
 
-  // 정확도를 위해 10점 이상만 가져옵니다.
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
+  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ✅ [GPT 호출] (창의력 0 설정)
+// ✅ [GPT 호출] (창의력 0)
 async function getGPT3TurboResponse(input, context = []) {
+  // 정보가 없으면 바로 Fallback 메시지 반환
   if (context.length === 0) {
-      return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 고객센터(02-557-0920)로 문의해주시면 친절히 안내해 드리겠습니다.";
+      return "죄송합니다. 고객님, 문의하신 내용에 대한 정확한 정보를 찾을 수 없습니다. 아래 상담 채널을 이용해주시면 친절히 안내해 드리겠습니다.";
   }
 
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
@@ -190,12 +194,8 @@ async function getGPT3TurboResponse(input, context = []) {
   try {
     const res = await axios.post(OPEN_URL, {
       model: FINETUNED_MODEL, 
-      messages: [
-          { role: "system", content: sys }, 
-          { role: "user", content: input }
-      ],
-      temperature: 0, 
-      max_tokens: 500
+      messages: [{ role: "system", content: sys }, { role: "user", content: input }],
+      temperature: 0, max_tokens: 500
     }, { 
         headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } 
     });
@@ -203,13 +203,8 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [★수정] 유틸 함수 (서버는 텍스트를 건드리지 않음) ==========
-function formatResponseText(text) {
-  // 프론트엔드에서 linkify 함수가 처리하므로, 서버는 텍스트 그대로 반환합니다.
-  // 이렇게 해야 프론트엔드 타이핑 효과와 충돌하지 않습니다.
-  return text || "";
-}
-
+// ========== [유틸 함수] ==========
+function formatResponseText(text) { return text || ""; } // 프론트엔드에서 처리
 function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없나요/g, "없어요").trim(); }
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
@@ -218,7 +213,6 @@ function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" &
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
-
     try {
         await client.connect();
         const db = client.db(DB_NAME);
@@ -235,15 +229,13 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             const docs = chunks.map((chunk, index) => ({
                 category: "pdf-knowledge",
                 question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
-                answer: chunk, 
-                createdAt: new Date()
+                answer: chunk, createdAt: new Date()
             }));
             if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
             fs.unlink(req.file.path, () => {});
             await updateSearchableData();
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
         }
-
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({ role, content: fullPrompt, createdAt: new Date() });
@@ -252,8 +244,7 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         }
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
     } catch (e) { 
-        console.error(e); 
-        if (req.file) fs.unlink(req.file.path, () => {});
+        console.error(e); if (req.file) fs.unlink(req.file.path, () => {});
         res.status(500).json({ error: e.message }); 
     } finally { await client.close(); }
 });
@@ -269,7 +260,6 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     try {
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
-
         try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } 
         catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
 
@@ -286,20 +276,15 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
             answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
             createdAt: new Date()
         });
-
-        fs.unlink(req.file.path, () => {});
-        ftpClient.close();
-        await updateSearchableData();
+        fs.unlink(req.file.path, () => {}); ftpClient.close(); await updateSearchableData();
         res.json({ message: "이미지 지식 등록 완료" });
     } catch (e) {
-        console.error("FTP 업로드 오류:", e);
-        if (req.file) fs.unlink(req.file.path, () => {});
-        ftpClient.close();
+        console.error("FTP 오류:", e); if (req.file) fs.unlink(req.file.path, () => {}); ftpClient.close();
         res.status(500).json({ error: "FTP 업로드 실패: " + e.message });
     } finally { await client.close(); }
 });
 
-// ========== [API] 게시글 수정 통합 ==========
+// ========== [API] 수정 통합 ==========
 app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     const { id } = req.params;
     const { question, answer } = req.body;
@@ -324,34 +309,26 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
             const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
             newAnswer = `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
-            fs.unlink(file.path, () => {});
-            ftpClient.close();
+            fs.unlink(file.path, () => {}); ftpClient.close();
         }
-
-        await db.collection("postItNotes").updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { question: question, answer: newAnswer, updatedAt: new Date() } }
-        );
+        await db.collection("postItNotes").updateOne({ _id: new ObjectId(id) }, { $set: { question, answer: newAnswer, updatedAt: new Date() } });
         await updateSearchableData();
         res.json({ message: "수정 완료" });
     } catch (e) {
-        if (file) fs.unlink(file.path, () => {});
-        ftpClient.close();
+        if (file) fs.unlink(file.path, () => {}); ftpClient.close();
         res.status(500).json({ error: e.message });
     } finally { await client.close(); }
 });
 
-// ========== [API] 게시글 삭제 ==========
+// ========== [API] 삭제 ==========
 app.delete("/postIt/:id", async(req, res) => { 
     const { id } = req.params;
     const client = new MongoClient(MONGODB_URI);
     const ftpClient = new ftp.Client();
-
     try {
         await client.connect();
         const db = client.db(DB_NAME);
         const targetPost = await db.collection("postItNotes").findOne({ _id: new ObjectId(id) });
-
         if (targetPost) {
             const imgMatch = targetPost.answer && targetPost.answer.match(/src="([^"]+)"/);
             if (imgMatch) {
@@ -374,6 +351,7 @@ app.delete("/postIt/:id", async(req, res) => {
 });
 
 // ========== [Cafe24 API] ==========
+// (중략... 위와 동일한 apiRequest 등은 생략하고 핵심 로직으로 넘어갑니다)
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -383,7 +361,6 @@ async function apiRequest(method, url, data = {}, params = {}) {
       throw error;
     }
 }
-// (기존 Cafe24 관련 함수들 - getOrderShippingInfo, getShipmentDetail 등은 그대로 유지됨)
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
@@ -411,15 +388,20 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 답변 로직] ==========
+// ========== [규칙 답변 로직 (상담사 연결 추가됨)] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    if (normalized.includes("상담사 연결") || normalized.includes("상담원 연결")) return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
+    // [★복구] 상담사/상담원 키워드 시 링크 반환
+    if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
+        return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
+    }
+
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
+    // (배송 조회 로직 등은 그대로 유지...)
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -518,9 +500,12 @@ app.post("/chat", async (req, res) => {
         }
     }
 
-    // ★ 서버는 텍스트를 건드리지 않고 그대로 보냅니다 (프론트엔드 linkify 활용)
-    const finalAnswer = formatResponseText(gptAnswer);
+    // ★ [핵심] 검색 결과가 없을 경우 상담사 링크 자동 추가
+    if (docs.length === 0) {
+        gptAnswer += FALLBACK_MESSAGE_HTML;
+    }
 
+    const finalAnswer = formatResponseText(gptAnswer);
     await saveConversationLog(memberId, message, finalAnswer);
     res.json({ text: finalAnswer, videoHtml: null });
 
