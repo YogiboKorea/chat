@@ -11,6 +11,7 @@ const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
 const dayjs = require('dayjs');
+const pdfParse = require('pdf-parse'); // [추가됨] PDF 분석용
 
 // ✅ [중요] .env 파일 경로 명시적 지정
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -37,6 +38,20 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+// ✅ 파일 업로드 설정 (Multer)
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
+        filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname}`)
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB 제한
+});
+
+// 폴더가 없으면 생성
+if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
+    fs.mkdirSync(path.join(__dirname, 'uploads'));
+}
+
 // ========== [글로벌 상태] ==========
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
@@ -50,14 +65,14 @@ let currentSystemPrompt = `
 
 // ========== [상수: HTML 템플릿] ==========
 const COUNSELOR_LINKS_HTML = `
-<div style="margin-top: 5px;">
+<div style="margin-top: 15px;">
   📮 <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" style="color:#3b1e1e; font-weight:bold; text-decoration:underline; cursor:pointer;">카카오플친 연결하기 (팝업)</a><br>
   📮 <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" style="color:#03c75a; font-weight:bold; text-decoration:underline; cursor:pointer;">네이버톡톡 연결하기 (팝업)</a>
 </div>
 `;
 
 const FALLBACK_MESSAGE_HTML = `
-<div style="margin-top: 5px; border-top: 1px dashed #ddd; padding-top: 10px;">
+<div style="margin-top: 20px; border-top: 1px dashed #ddd; padding-top: 10px;">
   <span style="font-size:13px; color:#888;">원하시는 답변을 찾지 못하셨나요?</span>
   ${COUNSELOR_LINKS_HTML}
 </div>
@@ -115,11 +130,14 @@ async function updateSearchableData() {
     await client.connect();
     const db = client.db(DB_NAME);
 
+    // postItNotes 컬렉션에서 데이터 가져오기 (PDF 내용 포함)
     const notes = await db.collection("postItNotes").find({}).toArray();
     const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
+    
     allSearchableData = [...staticFaqList, ...dynamic];
     console.log(`✅ 검색 데이터 갱신 완료: 총 ${allSearchableData.length}개 로드됨`);
 
+    // 최신 시스템 프롬프트 적용
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) {
         currentSystemPrompt = prompts[0].content; 
@@ -137,16 +155,21 @@ function findRelevantContent(msg) {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+    
+    // 질문에 키워드 포함 시 점수
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 20;
+    
+    // 키워드 매칭
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 10;
-      if (item.a.toLowerCase().includes(cleanW)) score += 1;
+      if (item.q.toLowerCase().includes(cleanW)) score += 10; // 질문에 포함되면 높은 점수
+      if (item.a.toLowerCase().includes(cleanW)) score += 3;  // 답변(내용)에 포함되면 낮은 점수
     });
     return { ...item, score };
   });
 
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 3);
+  // 점수 내림차순 정렬 후 상위 3개 추출
+  return scored.filter(i => i.score >= 3).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 // ✅ [GPT 호출]
@@ -161,21 +184,17 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [★ 수정됨] 유틸 함수: 텍스트 포맷팅 (줄바꿈 최적화 + 링크 변환)
+// ========== [유틸 함수] ==========
 function formatResponseText(text) {
   if (!text) return "";
-  
   let formatted = text;
-
-  // 1. [삭제됨] 마침표 뒤 강제 줄바꿈 코드를 제거했습니다.
-  // formatted = text.replace(/([가-힣]+)[.]\s/g, '$1.\n');  <-- 이 줄이 문제였음!
-
-  // 2. 마크다운 링크 변환: [텍스트](주소) -> <a>태그
+  
+  // 마크다운 링크 변환: [텍스트](주소) -> <a>태그
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
   });
 
-  // 3. 일반 URL 텍스트 변환 (이미 <a> 태그 안에 있는 것 제외)
+  // 일반 URL 텍스트 변환
   formatted = formatted.replace(/(?<!href="|">)(https?:\/\/[^\s<)]+)/g, (url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${url}</a>`;
   });
@@ -187,7 +206,75 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [Cafe24 API] ==========
+// ========== [API: PDF 업로드 및 분석 (핵심 기능)] ==========
+// upload.single('file') 미들웨어를 사용하여 파일 수신
+app.post("/chat_send", upload.single('file'), async (req, res) => {
+    const { role, content } = req.body;
+    const client = new MongoClient(MONGODB_URI);
+
+    try {
+        await client.connect();
+        const db = client.db(DB_NAME);
+
+        // 1️⃣ PDF 파일이 업로드된 경우 (지식 학습)
+        if (req.file && req.file.mimetype === 'application/pdf') {
+            const dataBuffer = fs.readFileSync(req.file.path);
+            const data = await pdfParse(dataBuffer);
+            
+            // 텍스트 정제 (줄바꿈 정리)
+            const cleanText = data.text.replace(/\n\n+/g, '\n').trim();
+            
+            // ★ 중요: 텍스트 Chunking (500자 단위로 자르기)
+            // 긴 문서를 통째로 넣으면 검색 정확도가 떨어지므로 작게 나눕니다.
+            const chunkSize = 500; 
+            const chunks = [];
+            for (let i = 0; i < cleanText.length; i += chunkSize) {
+                chunks.push(cleanText.substring(i, i + chunkSize));
+            }
+
+            // DB에 저장 (postItNotes 컬렉션 재활용)
+            // 질문 필드에 '[PDF 학습]' 태그를 달아 구분합니다.
+            const docs = chunks.map((chunk, index) => ({
+                category: "pdf-knowledge",
+                question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
+                answer: chunk, 
+                createdAt: new Date()
+            }));
+
+            if (docs.length > 0) {
+                await db.collection("postItNotes").insertMany(docs);
+            }
+
+            // 임시 파일 삭제
+            fs.unlink(req.file.path, () => {});
+            
+            // 메모리 갱신 (즉시 검색 가능하게)
+            await updateSearchableData();
+            
+            return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
+        }
+
+        // 2️⃣ (옵션) 텍스트로 역할 설정하는 경우 (기존 유지)
+        if (role && content) {
+            const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
+            await db.collection("systemPrompts").insertOne({
+                role, content: fullPrompt, createdAt: new Date()
+            });
+            currentSystemPrompt = fullPrompt;
+            return res.json({ message: "LLM 역할 설정이 완료되었습니다." });
+        }
+
+        res.status(400).json({ error: "파일이나 내용이 없습니다." });
+
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: e.message }); 
+    } finally { 
+        await client.close(); 
+    }
+});
+
+// ========== [Cafe24 API 관련 함수 생략없이 포함] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -224,19 +311,15 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [하드코딩 규칙 답변 로직] ==========
+// ========== [규칙 기반 답변 로직 (findAnswer)] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 1. 상담사, 고객센터
     if (normalized.includes("상담사 연결") || normalized.includes("상담원 연결")) return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
-    
-    // 2. 장바구니, 회원정보
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 3. 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -271,7 +354,6 @@ async function findAnswer(userInput, memberId) {
         return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
 
-    // 4. JSON 하드코딩 - 커버링 영상
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -294,7 +376,6 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 5. JSON 하드코딩 - 사이즈 정보
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "허기보"];
@@ -305,31 +386,11 @@ async function findAnswer(userInput, memberId) {
             }
         }
     }
-
-    // 6. JSON 하드코딩 - 비즈 안내
-    if (companyData.biz && (normalized.includes("비즈") || normalized.includes("충전재"))) {
-        // ...
-    }
     
     return null;
 }
 
-// ========== [API: chat_send] ==========
-app.post("/chat_send", async (req, res) => {
-    const { role, content } = req.body;
-    const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
-    const client = new MongoClient(MONGODB_URI);
-    try {
-        await client.connect();
-        await client.db(DB_NAME).collection("systemPrompts").insertOne({
-            role, content: fullPrompt, createdAt: new Date()
-        });
-        currentSystemPrompt = fullPrompt;
-        res.json({ message: "LLM 교육(프롬프트 설정)이 완료되었습니다." });
-    } catch (e) { res.status(500).json({ error: e.message }); } finally { await client.close(); }
-});
-
-// ========== [Chat 요청 처리] ==========
+// ========== [메인 Chat 요청 처리] ==========
 app.post("/chat", async (req, res) => {
   const { message, memberId } = req.body;
   if (!message) return res.status(400).json({ error: "No message" });
@@ -345,7 +406,6 @@ app.post("/chat", async (req, res) => {
     let gptAnswer = await getGPT3TurboResponse(message, docs);
     gptAnswer = formatResponseText(gptAnswer);
 
-    // [구조대] GPT가 놓친 영상/이미지 강제 복구
     if (docs.length > 0) {
         const bestDoc = docs[0];
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
@@ -401,7 +461,6 @@ app.post("/postIt", async(req,res)=>{
 app.put("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").updateOne({_id:new ObjectId(req.params.id)},{$set:{...req.body,updatedAt:new Date()}});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 app.delete("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").deleteOne({_id:new ObjectId(req.params.id)});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 
-const upload = multer({storage:multer.diskStorage({destination:(r,f,c)=>c(null,path.join(__dirname,'uploads')),filename:(r,f,c)=>c(null,`${Date.now()}_${f.originalname}`)}),limits:{fileSize:5*1024*1024}});
 app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
   if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
   try{await c.access({host:process.env.FTP_HOST,user:process.env.FTP_USER,password:process.env.FTP_PASS,secure:false});
