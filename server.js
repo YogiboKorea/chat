@@ -44,14 +44,17 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ★ [시스템 프롬프트] 할루시네이션 원천 봉쇄
+// ★ [핵심 수정] 시스템 프롬프트: 경쟁사 언급 금지 & 외부 지식 차단
 let currentSystemPrompt = `
-1. 역할: 당신은 '요기보(Yogibo)'의 데이터 검색 봇입니다. 
-2. ★ 절대 원칙 (가장 중요): 
-   - 반드시 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
-   - [참고 정보]에 없는 내용(특히 롤 메이트, 전자기기 충전 등)은 절대 지어내지 말고 오직 "NO_CONTEXT" 라고만 출력하세요.
-3. 데이터 우선순위:
-   - 내가 제공해준 [참고 정보] 텍스트가 정답입니다.
+1. 역할: 당신은 오직 '요기보(Yogibo)' 브랜드의 제품과 서비스만 알고 있는 AI 상담원입니다.
+2. ★ 절대 금지 사항 (Critical Rules):
+   - 당신의 사전 지식(인터넷 정보, 외부 상식)을 사용하여 답변하지 마세요.
+   - **IKEA, MUJI, 한샘 등 타 브랜드나 경쟁사 제품을 절대로 언급하거나 추천하지 마세요.**
+   - 요기보와 관련 없는 일반적인 질문(날씨, 주식, 타사 제품 등)에는 답변하지 마세요.
+3. 답변 작성 규칙:
+   - 반드시 아래 제공되는 [참고 정보]에 있는 내용만을 바탕으로 답변하세요.
+   - [참고 정보]에 질문에 대한 명확한 답변이 없다면, 아는 척 하지 말고 오직 "NO_CONTEXT" 라고만 출력하세요.
+   - '빈백'은 가방이 아니라 소파입니다. '충전'은 전기 충전이 아니라 비즈 리필입니다.
 4. 포맷: 
    - 링크는 [버튼명](URL) 형식으로 작성하세요.
    - HTML 태그(<img...>)는 변경하지 말고 그대로 출력하세요.
@@ -70,23 +73,23 @@ const COUNSELOR_LINKS_HTML = `
 </div>
 `;
 
-// ★ [수정] 부드러운 되묻기 메시지 (예시 포함)
+// ★ 되묻기 및 상담 연결 메시지
 const RETRY_MESSAGE_HTML = `
 <div style="margin-top: 10px;">
   <p style="font-size:14px; color:#333; font-weight:bold; margin-bottom:10px;">
-    🤔 죄송합니다. 정확한 정보를 찾지 못했어요.
+    🤔 죄송합니다. 요기보 데이터에서 정보를 찾지 못했어요.
   </p>
   <p style="font-size:13px; color:#555; line-height:1.5;">
-    질문이 너무 짧거나 학습되지 않은 내용일 수 있습니다.<br>
-    <b>조금 더 구체적인 문장으로 다시 말씀해 주시겠어요?</b>
+    제가 아직 학습하지 못한 내용이거나, 질문이 너무 포괄적일 수 있습니다.<br>
+    <b>원하시는 상품명이나 내용을 구체적으로 말씀해 주시겠어요?</b>
   </p>
   <div style="background:#f8f9fa; padding:10px; border-radius:8px; margin:10px 0; font-size:12px; color:#666;">
     <strong>💡 이렇게 물어보세요!</strong><br>
-    - "충전 언제 해?" (X) → "맥스 비즈 충전 시기 알려줘" (O)<br>
-    - "세탁법" (X) → "커버 세탁하는 방법 알려줘" (O)
+    - "1인용 소파 추천" (X) → "맥스나 팟 같은 1인용 빈백 추천해줘" (O)<br>
+    - "세탁" (X) → "커버 세탁 방법 알려줘" (O)
   </div>
   <p style="font-size:12px; color:#888; margin-bottom:10px;">
-    그래도 해결되지 않으신다면, 아래 버튼을 눌러 상담사를 찾아주세요. 👇
+    정확한 상담이 필요하시면 상담사를 연결해 드릴게요. 👇
   </p>
   ${COUNSELOR_LINKS_HTML}
 </div>
@@ -134,6 +137,7 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
+// 1차 검색 (엄격 20점)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -145,20 +149,42 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
+    if (q === cleanMsg) score += 100;
+    else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
+    
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
-    
-    // 역방향 매칭
+
     const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
     dbKeywords.forEach(dbK => { if (msg.includes(dbK)) score += 10; });
 
     return { ...item, score };
   });
 
+  return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+// 2차 검색 (심층 10점 - PDF/일반문의)
+function findDeepSearchContent(msg) {
+  const kws = msg.split(/\s+/).filter(w => w.length > 1);
+  if (!kws.length && msg.length < 2) return [];
+  const targetData = allSearchableData.filter(item => item.c === 'pdf-knowledge' || item.c === 'normal');
+  const scored = targetData.map(item => {
+    let score = 0;
+    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
+    const a = (item.a || "").toLowerCase();
+    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
+    kws.forEach(w => {
+      const cleanW = w.toLowerCase();
+      if (item.q.toLowerCase().includes(cleanW)) score += 20;
+      if (a.includes(cleanW)) score += 10;
+    });
+    return { ...item, score };
+  });
   return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
@@ -219,31 +245,31 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [★강력한 규칙 답변 로직] ==========
+// ========== [규칙 기반 답변] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 1. 상담사 연결 키워드
+    // 1. 상담원
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
 
-    // 2. [★강력 차단] 충전 = 비즈 리필 (전기 X)
+    // 2. 충전 = 비즈 리필
     if (normalized.includes("충전")) {
         return { 
             text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br><br>
             요기보 제품은 전자기기가 아니라서 전기가 필요 없어요!<br>
             요기보에서 말하는 <b>'충전'</b>은 푹 꺼진 소파를 되살리는 <b>'비즈(충전재) 리필'</b>을 의미합니다.<br><br>
-            사용하시다가 쿠션감이 줄어들면 '리필 비즈'를 구매해서 채워주세요. 새것처럼 쫀쫀해집니다! 🛋️<br>
+            사용하시다가 쿠션감이 줄어들면 '리필 비즈'를 보충해주세요. 새것처럼 쫀쫀해집니다! 🛋️<br>
             <a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` 
         };
     }
 
-    // 3. [★강력 차단] 없는 제품 (롤 메이트 등)
-    const unknownKeywords = ["롤 메이트", "롤메이트", "전기", "배터리", "청소기"];
+    // 3. 없는 제품 방어
+    const unknownKeywords = ["롤 메이트", "롤메이트", "전기", "배터리", "청소기", "이케아", "무인양품", "한샘"];
     for (let word of unknownKeywords) {
         if (normalized.includes(word)) {
-            return { text: `죄송합니다. 문의하신 '<b>${word}</b>'에 대한 정보는 요기보 데이터에 없습니다.<br>보다 정확한 확인을 위해 상담사를 연결해 드릴까요?${COUNSELOR_LINKS_HTML}` };
+            return { text: RETRY_MESSAGE_HTML }; // 바로 되묻기 모드로 진입
         }
     }
 
@@ -258,39 +284,31 @@ async function findAnswer(userInput, memberId) {
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
-                const orderId = normalized.match(/\d{8}-\d{7}/)[0];
-                const ship = await getShipmentDetail(orderId);
+                const orderId = normalized.match(/\d{8}-\d{7}/)[0]; const ship = await getShipmentDetail(orderId);
                 if (ship) {
                     let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
                     return { text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.\n🚚 택배사: ${ship.shipping_company_name}\n📄 송장번호: ${trackingDisplay}` };
-                }
-                return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
+                } return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
             } catch (e) { return { text: "조회 오류가 발생했습니다." }; }
-        }
-        return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+        } return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-
     const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
     if (isTracking && !containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
           try {
             const data = await getOrderShippingInfo(memberId);
             if (data.orders?.[0]) {
-              const t = data.orders[0];
-              const ship = await getShipmentDetail(t.order_id);
+              const t = data.orders[0]; const ship = await getShipmentDetail(t.order_id);
               if (ship) {
                  let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
                  return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
-              }
-              return { text: "최근 주문 확인 중입니다." };
-            }
-            return { text: "최근 2주 내 주문 내역이 없습니다." };
+              } return { text: "최근 주문 확인 중입니다." };
+            } return { text: "최근 2주 내 주문 내역이 없습니다." };
           } catch (e) { return { text: "조회 실패." }; }
-        }
-        return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+        } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
 
-    // 6. JSON 데이터 (커버링, 사이즈)
+    // 6. JSON 데이터
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -332,29 +350,29 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 기반 답변 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: DB 검색
-    const docs = findRelevantContent(message);
+    // 1차 검색
+    let docs = findRelevantContent(message);
+    
+    // 2차 검색 (패자부활)
+    if (docs.length === 0) {
+        docs = findDeepSearchContent(message);
+    }
     
     let gptAnswer = "";
-    
-    // ★ [핵심] 검색 결과 없음 -> 되묻기 & 상담원 연결 (RETRY_MESSAGE_HTML)
     if (docs.length === 0) {
         gptAnswer = RETRY_MESSAGE_HTML;
     } else {
         gptAnswer = await getGPT3TurboResponse(message, docs);
         
-        // ★ GPT가 모른다고 함 -> 되묻기 & 상담원 연결
         if (gptAnswer.includes("NO_CONTEXT")) {
             gptAnswer = RETRY_MESSAGE_HTML;
         } else {
-            // 정상 답변일 때만 이미지 복구
             if (docs.length > 0) {
                 const bestDoc = docs[0];
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
@@ -370,8 +388,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (이하 업로드/수정/삭제/로그저장/엑셀/서버실행 API 등 기존 코드 유지)
-// ... (생략 없이 이전 코드와 동일하게 복사해서 쓰시면 됩니다) ...
+// (이하 나머지 파일 업로드 등의 API는 기존과 동일)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
