@@ -178,7 +178,7 @@ function findRelevantContent(msg) {
     return { ...item, score };
   });
 
-  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
+  return scored.filter(i => i.score >= 7).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 // ✅ [GPT 호출] (창의력 0)
