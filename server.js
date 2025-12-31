@@ -324,6 +324,85 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
       await client.close();
   }
 });
+
+// ========== [신규] 게시글 수정 (이미지 교체 포함) ==========
+app.put("/postIt/:id/update_image", upload.single('image'), async (req, res) => {
+  const { id } = req.params;
+  const { question, answer } = req.body; // 텍스트만 수정할 수도 있으니 받음
+  const file = req.file;
+
+  const client = new MongoClient(MONGODB_URI);
+  const ftpClient = new ftp.Client();
+
+  try {
+      await client.connect();
+      const db = client.db(DB_NAME);
+      
+      let newAnswer = answer;
+
+      // ★ 새 이미지가 업로드된 경우에만 FTP 로직 실행
+      if (file) {
+          // 1. FTP 접속
+          const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
+          await ftpClient.access({
+              host: cleanFtpHost,
+              user: YOGIBO_FTP_ID,
+              password: YOGIBO_FTP_PW,
+              secure: false
+          });
+
+          // 2. 경로 진입 (web -> chat)
+          try {
+              await ftpClient.ensureDir("web");
+              await ftpClient.ensureDir("chat");
+          } catch (dirErr) {
+              await ftpClient.cd("/");
+              await ftpClient.ensureDir("www");
+              await ftpClient.ensureDir("chat");
+          }
+
+          // 3. 파일 업로드
+          await ftpClient.uploadFrom(file.path, file.filename);
+
+          // 4. 새 이미지 URL 생성
+          const remotePath = "web/chat";
+          const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
+          const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
+
+          // 5. 답변 내용(HTML) 갈아끼우기
+          // 기존 텍스트는 유지하고 이미지만 교체하는 방식
+          newAnswer = `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
+
+          // 임시 파일 삭제
+          fs.unlink(file.path, () => {});
+          ftpClient.close();
+      }
+
+      // 6. DB 업데이트
+      await db.collection("postItNotes").updateOne(
+          { _id: new ObjectId(id) },
+          { 
+              $set: { 
+                  question: question, 
+                  answer: newAnswer, // 이미지가 바뀌었으면 새 HTML, 아니면 기존 텍스트
+                  updatedAt: new Date() 
+              } 
+          }
+      );
+
+      await updateSearchableData(); // 검색 데이터 갱신
+      res.json({ message: "수정 완료" });
+
+  } catch (e) {
+      console.error("수정 오류:", e);
+      if (file) fs.unlink(file.path, () => {});
+      ftpClient.close();
+      res.status(500).json({ error: e.message });
+  } finally {
+      await client.close();
+  }
+});
+
 // ========== [Cafe24 API] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
