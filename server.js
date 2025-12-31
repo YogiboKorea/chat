@@ -44,25 +44,31 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ★ [핵심 수정] 시스템 프롬프트: 경쟁사 언급 금지 & 외부 지식 차단
+// ★ [시스템 프롬프트]
 let currentSystemPrompt = `
-1. 역할: 당신은 오직 '요기보(Yogibo)' 브랜드의 제품과 서비스만 알고 있는 AI 상담원입니다.
-2. ★ 절대 금지 사항 (Critical Rules):
-   - 당신의 사전 지식(인터넷 정보, 외부 상식)을 사용하여 답변하지 마세요.
-   - **IKEA, MUJI, 한샘 등 타 브랜드나 경쟁사 제품을 절대로 언급하거나 추천하지 마세요.**
-   - 요기보와 관련 없는 일반적인 질문(날씨, 주식, 타사 제품 등)에는 답변하지 마세요.
-3. 답변 작성 규칙:
-   - 반드시 아래 제공되는 [참고 정보]에 있는 내용만을 바탕으로 답변하세요.
-   - [참고 정보]에 질문에 대한 명확한 답변이 없다면, 아는 척 하지 말고 오직 "NO_CONTEXT" 라고만 출력하세요.
-   - '빈백'은 가방이 아니라 소파입니다. '충전'은 전기 충전이 아니라 비즈 리필입니다.
+1. 역할: 당신은 '요기보(Yogibo)'의 데이터 기반 상담 봇입니다. 
+2. ★ 절대 원칙 (Strict Mode): 
+   - 오직 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
+   - [참고 정보]에 없는 내용은 절대 지어내거나(Hallucination) 외부 지식을 사용하지 마세요.
+   - 타 브랜드(이케아, 무인양품 등)는 절대 언급하지 마세요.
+   - 답변할 정보가 부족하거나 없으면 오직 "NO_CONTEXT" 라고만 출력하세요.
+3. 데이터 우선순위:
+   - 내가 제공해준 정보가 절대적인 정답입니다.
 4. 포맷: 
    - 링크는 [버튼명](URL) 형식으로 작성하세요.
    - HTML 태그(<img...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== 상담사 연결 링크 (디자인) ==========
+// ========== 상담사 연결 링크 ==========
 const COUNSELOR_LINKS_HTML = `
 <div class="consult-container">
+  <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
+    <i class="fa-solid fa-triangle-exclamation"></i> 정확한 정보 확인이 필요합니다.
+  </p>
+  <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
+    죄송합니다. 문의하신 내용은 현재 학습되지 않았거나,<br>보다 정확한 안내가 필요한 사항입니다.<br>
+    아래 버튼을 눌러 <b>1:1 상담</b>을 이용해 주세요.
+  </p>
   <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
   </a>
@@ -91,6 +97,12 @@ const RETRY_MESSAGE_HTML = `
   <p style="font-size:12px; color:#888; margin-bottom:10px;">
     정확한 상담이 필요하시면 상담사를 연결해 드릴게요. 👇
   </p>
+  ${COUNSELOR_LINKS_HTML}
+</div>
+`;
+
+const FALLBACK_MESSAGE_HTML = `
+<div style="margin-top: 10px;">
   ${COUNSELOR_LINKS_HTML}
 </div>
 `;
@@ -137,7 +149,6 @@ async function updateSearchableData() {
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// 1차 검색 (엄격 20점)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -167,7 +178,6 @@ function findRelevantContent(msg) {
   return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// 2차 검색 (심층 10점 - PDF/일반문의)
 function findDeepSearchContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -249,7 +259,7 @@ async function getShipmentDetail(orderId) {
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 1. 상담원
+    // 1. 상담사 연결
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
@@ -260,27 +270,44 @@ async function findAnswer(userInput, memberId) {
             text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br><br>
             요기보 제품은 전자기기가 아니라서 전기가 필요 없어요!<br>
             요기보에서 말하는 <b>'충전'</b>은 푹 꺼진 소파를 되살리는 <b>'비즈(충전재) 리필'</b>을 의미합니다.<br><br>
-            사용하시다가 쿠션감이 줄어들면 '리필 비즈'를 보충해주세요. 새것처럼 쫀쫀해집니다! 🛋️<br>
+            사용하시다가 쿠션감이 줄어들면 '리필 비즈'를 구매해서 채워주세요. 새것처럼 쫀쫀해집니다! 🛋️<br>
             <a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` 
         };
     }
 
-    // 3. 없는 제품 방어
-    const unknownKeywords = ["롤 메이트", "롤메이트", "전기", "배터리", "청소기", "이케아", "무인양품", "한샘"];
-    for (let word of unknownKeywords) {
-        if (normalized.includes(word)) {
-            return { text: RETRY_MESSAGE_HTML }; // 바로 되묻기 모드로 진입
+    // ★ [3. 신규] 제품명 URL 자동 생성 로직
+    // 예: "슬림 제품 url 알려줘", "맥스 링크 줘" 등
+    const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라"];
+    
+    for (const product of productKeywords) {
+        if (normalized.includes(product)) {
+            // 제품명 + (URL, 링크, 주소, 검색, 찾아줘, 보여줘) 등의 키워드가 같이 있으면
+            if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래")) {
+                const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(product)}`;
+                return {
+                    text: `찾으시는 <b>'${product}'</b> 관련 제품 정보를 찾았습니다.<br>아래 링크를 통해 자세한 내용을 확인해보세요! 👇<br><br>
+                    <a href="${searchUrl}" target="_blank" style="color:#58b5ca; font-weight:bold;">🔍 ${product} 검색 결과 바로가기</a>`
+                };
+            }
         }
     }
 
-    // 4. 일반 규칙
+    // 4. 없는 제품 차단
+    const unknownKeywords = ["롤 메이트", "롤메이트", "전기", "배터리", "청소기", "이케아", "무인양품", "한샘"];
+    for (let word of unknownKeywords) {
+        if (normalized.includes(word)) {
+            return { text: RETRY_MESSAGE_HTML }; 
+        }
+    }
+
+    // 5. 일반 규칙
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) {
         return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     }
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 5. 배송 조회
+    // 6. 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -308,7 +335,7 @@ async function findAnswer(userInput, memberId) {
         } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
 
-    // 6. JSON 데이터
+    // 7. JSON 데이터
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -388,7 +415,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (이하 나머지 파일 업로드 등의 API는 기존과 동일)
+// (나머지 파일 API 유지)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
