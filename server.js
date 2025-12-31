@@ -9,10 +9,8 @@ const { MongoClient, ObjectId } = require("mongodb");
 const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
-const dayjs = require('dayjs');
 const pdfParse = require('pdf-extraction');
 
-// .env 설정 로드
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const staticFaqList = require("./faq");
 
@@ -32,7 +30,7 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 파일 업로드 설정 (Multer)
+// ✅ 파일 업로드 설정
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
@@ -42,43 +40,32 @@ const upload = multer({
 });
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__dirname, 'uploads'));
 
-// ✅ 글로벌 변수 (중요!)
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ✅ 데이터 로딩 (JSON)
-const companyDataPath = path.join(__dirname, "json", "companyData.json");
-let companyData = {};
-try { 
-    if (fs.existsSync(companyDataPath)) {
-        companyData = JSON.parse(fs.readFileSync(companyDataPath, "utf-8")); 
-    }
-} catch (e) { console.error("companyData load fail", e); }
-
-
-// ★ [시스템 프롬프트] 철벽 방어 모드
+// ★ [시스템 프롬프트] 철저히 데이터 기반 답변만 허용
 let currentSystemPrompt = `
-1. 역할: 당신은 '요기보(Yogibo)'의 데이터 검색 봇입니다. 상담원 흉내를 내지 말고, 주어진 데이터에 있는 사실만 전달하세요.
-2. ★ 절대 원칙 (가장 중요): 
-   - 당신의 사전 지식(외부 지식)을 절대 사용하지 마세요.
-   - [참고 정보]에 없는 내용이라면, 어떤 대답도 지어내지 말고 오직 "NO_CONTEXT" 라고만 출력하세요.
-   - 사용자의 질문이 [참고 정보]와 100% 매칭되지 않거나 모호하다면 "NO_CONTEXT" 라고 출력하세요.
+1. 역할: 당신은 '요기보(Yogibo)'의 데이터 기반 상담 봇입니다. 
+2. ★ 절대 원칙 (Strict Mode): 
+   - 오직 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
+   - [참고 정보]에 없는 내용은 절대 지어내거나(Hallucination) 외부 지식을 사용하지 마세요.
+   - 답변할 정보가 부족하거나 없으면 오직 "NO_CONTEXT" 라고만 출력하세요.
 3. 데이터 우선순위:
-   - 내가 제공해준 [참고 정보] 텍스트가 정답입니다. 이 내용을 바탕으로 요약해서 답변하세요.
+   - 내가 제공해준 정보가 절대적인 정답입니다.
 4. 포맷: 
    - 링크는 [버튼명](URL) 형식으로 작성하세요.
-   - HTML 태그(<img...>)는 변경하지 말고 그대로 출력하세요.
+   - HTML 태그(<img...>, <iframe...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== 상담사 연결 링크 (HTML) ==========
+// ========== 상담사 연결 링크 (디자인) ==========
 const COUNSELOR_LINKS_HTML = `
 <div class="consult-container">
   <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
     <i class="fa-solid fa-triangle-exclamation"></i> 정확한 정보 확인이 필요합니다.
   </p>
   <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
-    문의하신 내용은 AI가 학습하지 못한 정보이거나,<br>보다 정확한 안내가 필요한 사항입니다.<br>
-    아래 버튼을 눌러 <b>전문 상담사</b>에게 문의해주세요.
+    죄송합니다. 문의하신 내용은 현재 학습되지 않았거나,<br>정확한 안내를 위해 상담사 확인이 필요합니다.<br>
+    아래 버튼을 눌러 <b>1:1 상담</b>을 이용해 주세요.
   </p>
   <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
@@ -90,7 +77,7 @@ const COUNSELOR_LINKS_HTML = `
 </div>
 `;
 
-// ★ 검색 실패 시 보여줄 HTML
+// ★ 검색 실패 시 보여줄 HTML (이게 바로 뜹니다)
 const FALLBACK_MESSAGE_HTML = `
 <div style="margin-top: 10px;">
   ${COUNSELOR_LINKS_HTML}
@@ -103,7 +90,11 @@ const LOGIN_BTN_HTML = `
 </div>
 `;
 
-// ========== [MongoDB 관리 함수] ==========
+// ✅ companyData.json 로드
+const companyDataPath = path.join(__dirname, "json", "companyData.json");
+let companyData = {};
+try { if (fs.existsSync(companyDataPath)) companyData = JSON.parse(fs.readFileSync(companyDataPath, "utf-8")); } catch (e) {}
+
 const tokenCollectionName = "tokens";
 async function getTokensFromDB() {
   const client = new MongoClient(MONGODB_URI);
@@ -123,7 +114,7 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-// RAG 데이터 갱신
+// ✅ 데이터 갱신 (FAQ + Chat_Send + Image Upload)
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
@@ -131,25 +122,28 @@ async function updateSearchableData() {
     const db = client.db(DB_NAME);
     const notes = await db.collection("postItNotes").find({}).toArray();
     const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
+    
+    // 정적 FAQ + 동적 DB 데이터 합치기
     allSearchableData = [...staticFaqList, ...dynamic];
+    
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) currentSystemPrompt = prompts[0].content; 
+    
+    console.log(`✅ 데이터 로드 완료: 총 ${allSearchableData.length}개`);
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ========== [검색 로직] 엄격한 기준 ==========
+// ✅ [핵심] 검색 점수 커트라인 대폭 상향 (엄격한 기준)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
-
-  console.log(`🔍 검색 시작: "${msg}"`);
 
   const scored = allSearchableData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 1. 완전 일치 (최고 점수)
+    // 1. 질문 완전 일치 (최고 점수)
     if (q === cleanMsg) score += 100;
     // 2. 포함 관계
     else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
@@ -161,20 +155,14 @@ function findRelevantContent(msg) {
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
 
-    // 4. 역방향 키워드 매칭
-    const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
-    dbKeywords.forEach(dbK => {
-        if (msg.includes(dbK)) score += 10;
-    });
-
     return { ...item, score };
   });
 
-  // ★ 20점 미만은 무시 (상담원 연결 유도)
+  // ★ 점수가 20점 미만이면 "관련 없음"으로 간주하고 빈 배열 반환
+  // 이렇게 하면 어설픈 검색 결과는 아예 GPT에게 넘어가지 않습니다.
   return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ========== [GPT 호출] ==========
 async function getGPT3TurboResponse(input, context = []) {
   if (context.length === 0) return "NO_CONTEXT"; 
 
@@ -190,105 +178,26 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "오류가 발생했습니다."; }
 }
 
-// ========== [유틸 함수] ==========
 function formatResponseText(text) { return text || ""; }
 function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없나요/g, "없어요").trim(); }
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [Cafe24 API 관련 함수] ==========
-async function apiRequest(method, url, data = {}, params = {}) {
-    try {
-      const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
-      return res.data;
-    } catch (error) {
-      if (error.response?.status === 401) { await refreshAccessToken(); return apiRequest(method, url, data, params); }
-      throw error;
-    }
-}
-async function getOrderShippingInfo(id) {
-  const today = new Date();
-  const start = new Date(); start.setDate(today.getDate() - 14);
-  return apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders`, {}, {
-    member_id: id, start_date: start.toISOString().split('T')[0], end_date: today.toISOString().split('T')[0], limit: 10
-  });
-}
-async function getShipmentDetail(orderId) {
-  const API_URL = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders/${orderId}/shipments`;
-  try {
-    const response = await apiRequest("GET", API_URL, {}, { shop_no: 1 });
-    if (response.shipments && response.shipments.length > 0) {
-      const shipment = response.shipments[0];
-      const carrierMap = {
-        "0019": { name: "롯데 택배", url: "https://www.lotteglogis.com/home/reservation/tracking/linkView?InvNo=" },
-        "0039": { name: "경동 택배", url: "https://kdexp.com/service/delivery/tracking.do?barcode=" },
-        "0023": { name: "경동 택배", url: "https://kdexp.com/service/delivery/tracking.do?barcode=" }
-      };
-      const carrierInfo = carrierMap[shipment.shipping_company_code] || { name: shipment.shipping_company_name || "지정 택배사", url: "" };
-      shipment.shipping_company_name = carrierInfo.name;
-      shipment.tracking_url = (shipment.tracking_no && carrierInfo.url) ? carrierInfo.url + shipment.tracking_no : null;
-      return shipment;
-    }
-    return null;
-  } catch (error) { throw error; }
-}
-
-// ========== [규칙 기반 답변 로직 (여기가 없어서 오류났던 부분)] ==========
+// ========== [규칙 기반 답변 (우선순위 1위)] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 상담사 연결 키워드
+    // 1. 상담원 연결 키워드
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
-        return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
+        return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
 
+    // 2. 고객센터 정보
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) {
         return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     }
-    if (normalized.includes("장바구니")) {
-        return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    }
-    if (normalized.includes("회원정보") || normalized.includes("정보수정")) {
-        return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    }
-    
-    // 배송 조회 로직
-    if (containsOrderNumber(normalized)) {
-        if (isUserLoggedIn(memberId)) {
-            try {
-                const orderId = normalized.match(/\d{8}-\d{7}/)[0];
-                const ship = await getShipmentDetail(orderId);
-                if (ship) {
-                    let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
-                    return { text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.\n🚚 택배사: ${ship.shipping_company_name}\n📄 송장번호: ${trackingDisplay}` };
-                }
-                return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
-            } catch (e) { return { text: "조회 오류가 발생했습니다." }; }
-        }
-        return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    }
 
-    const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
-    if (isTracking && !containsOrderNumber(normalized)) {
-        if (isUserLoggedIn(memberId)) {
-          try {
-            const data = await getOrderShippingInfo(memberId);
-            if (data.orders?.[0]) {
-              const t = data.orders[0];
-              const ship = await getShipmentDetail(t.order_id);
-              if (ship) {
-                 let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
-                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
-              }
-              return { text: "최근 주문 확인 중입니다." };
-            }
-            return { text: "최근 2주 내 주문 내역이 없습니다." };
-          } catch (e) { return { text: "조회 실패." }; }
-        }
-        return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    }
-
-    // 커버링 정보
+    // 3. companyData.json 기반 규칙 (커버링)
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -311,7 +220,7 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 사이즈 정보
+    // 4. companyData.json 기반 규칙 (사이즈)
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "허기보"];
@@ -321,6 +230,37 @@ async function findAnswer(userInput, memberId) {
                 }
             }
         }
+    }
+
+    // 5. 배송 및 장바구니/회원정보 (로그인 필요)
+    if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+    if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+    
+    if (containsOrderNumber(normalized)) {
+        if (isUserLoggedIn(memberId)) {
+            try {
+                const orderId = normalized.match(/\d{8}-\d{7}/)[0]; const ship = await getShipmentDetail(orderId);
+                if (ship) {
+                    let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
+                    return { text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.\n🚚 택배사: ${ship.shipping_company_name}\n📄 송장번호: ${trackingDisplay}` };
+                } return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
+            } catch (e) { return { text: "조회 오류가 발생했습니다." }; }
+        } return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+    }
+    const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
+    if (isTracking && !containsOrderNumber(normalized)) {
+        if (isUserLoggedIn(memberId)) {
+          try {
+            const data = await getOrderShippingInfo(memberId);
+            if (data.orders?.[0]) {
+              const t = data.orders[0]; const ship = await getShipmentDetail(t.order_id);
+              if (ship) {
+                 let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
+                 return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
+              } return { text: "최근 주문 확인 중입니다." };
+            } return { text: "최근 2주 내 주문 내역이 없습니다." };
+          } catch (e) { return { text: "조회 실패." }; }
+        } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
     
     return null;
@@ -332,25 +272,30 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
+    // 1단계: 규칙 기반 답변 (JSON 등) 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
+    // 2단계: DB(RAG) 검색
     const docs = findRelevantContent(message);
     
     let gptAnswer = "";
-    // ★ [철벽 방어] 검색된 정보가 0개면 바로 Fallback
+    
+    // ★ [철벽 방어] 검색된 정보가 0개면 -> 바로 상담원 연결 (GPT 안 거침)
     if (docs.length === 0) {
         gptAnswer = FALLBACK_MESSAGE_HTML;
     } else {
+        // 검색된 정보가 있으면 GPT에게 물어봄
         gptAnswer = await getGPT3TurboResponse(message, docs);
-        // ★ GPT가 "모르겠어요(NO_CONTEXT)"라고 해도 Fallback
+        
+        // ★ GPT도 "모르겠음(NO_CONTEXT)" 하면 -> 상담원 연결
         if (gptAnswer.includes("NO_CONTEXT")) {
             gptAnswer = FALLBACK_MESSAGE_HTML;
         } else {
-            // 정상 답변일 경우에만 이미지 복구
+            // 답변 성공 시 이미지/영상 태그 복구
             if (docs.length > 0) {
                 const bestDoc = docs[0];
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
@@ -366,7 +311,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// ========== [나머지 API (파일업로드, 수정 등) - 기존 유지] ==========
+// (나머지 API 동일)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
