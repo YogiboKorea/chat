@@ -11,7 +11,7 @@ const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
 const dayjs = require('dayjs');
-const pdfParse = require('pdf-extraction'); // ✅ 이걸로 변경 (변수명은 그대로 pdfParse 써도 됨)
+const pdfParse = require('pdf-extraction'); // ✅ [수정됨] 안정적인 라이브러리로 교체
 
 // ✅ [중요] .env 파일 경로 명시적 지정
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -38,13 +38,13 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 파일 업로드 설정 (Multer)
+// ✅ [수정됨] 파일 업로드 설정 (용량 50MB로 증가)
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
         filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname}`)
     }),
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB 제한
+    limits: { fileSize: 50 * 1024 * 1024 } // 💥 50MB 제한 (기존 10MB에서 상향)
 });
 
 // 폴더가 없으면 생성
@@ -156,19 +156,16 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 질문에 키워드 포함 시 점수
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 20;
     
-    // 키워드 매칭
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 10; // 질문에 포함되면 높은 점수
-      if (item.a.toLowerCase().includes(cleanW)) score += 3;  // 답변(내용)에 포함되면 낮은 점수
+      if (item.q.toLowerCase().includes(cleanW)) score += 10;
+      if (item.a.toLowerCase().includes(cleanW)) score += 3;
     });
     return { ...item, score };
   });
 
-  // 점수 내림차순 정렬 후 상위 3개 추출
   return scored.filter(i => i.score >= 3).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
@@ -184,12 +181,14 @@ async function getGPT3TurboResponse(input, context = []) {
   } catch (e) { return "답변 생성 중 문제가 발생했습니다."; }
 }
 
-// ========== [유틸 함수] ==========
+// ========== [유틸 함수: 텍스트 포맷팅 (줄바꿈 최적화 + 링크 변환)] ==========
 function formatResponseText(text) {
   if (!text) return "";
   let formatted = text;
+
+  // 마침표 뒤 강제 줄바꿈 코드 제거됨 (formatted = text.replace...)
   
-  // 마크다운 링크 변환: [텍스트](주소) -> <a>태그
+  // 마크다운 링크 변환
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, title, url) => {
       return `<a href="${url}" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">${title}</a>`;
   });
@@ -206,8 +205,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [API: PDF 업로드 및 분석 (핵심 기능)] ==========
-// upload.single('file') 미들웨어를 사용하여 파일 수신
+// ========== [API: PDF 업로드 및 분석] ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -216,24 +214,20 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         await client.connect();
         const db = client.db(DB_NAME);
 
-        // 1️⃣ PDF 파일이 업로드된 경우 (지식 학습)
+        // 1️⃣ PDF 파일 (지식 학습)
         if (req.file && req.file.mimetype === 'application/pdf') {
             const dataBuffer = fs.readFileSync(req.file.path);
-            const data = await pdfParse(dataBuffer);
+            const data = await pdfParse(dataBuffer); // pdf-extraction 사용
             
-            // 텍스트 정제 (줄바꿈 정리)
             const cleanText = data.text.replace(/\n\n+/g, '\n').trim();
             
-            // ★ 중요: 텍스트 Chunking (500자 단위로 자르기)
-            // 긴 문서를 통째로 넣으면 검색 정확도가 떨어지므로 작게 나눕니다.
+            // ★ 500자 단위 Chunking
             const chunkSize = 500; 
             const chunks = [];
             for (let i = 0; i < cleanText.length; i += chunkSize) {
                 chunks.push(cleanText.substring(i, i + chunkSize));
             }
 
-            // DB에 저장 (postItNotes 컬렉션 재활용)
-            // 질문 필드에 '[PDF 학습]' 태그를 달아 구분합니다.
             const docs = chunks.map((chunk, index) => ({
                 category: "pdf-knowledge",
                 question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
@@ -245,16 +239,13 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
                 await db.collection("postItNotes").insertMany(docs);
             }
 
-            // 임시 파일 삭제
             fs.unlink(req.file.path, () => {});
-            
-            // 메모리 갱신 (즉시 검색 가능하게)
             await updateSearchableData();
             
             return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
         }
 
-        // 2️⃣ (옵션) 텍스트로 역할 설정하는 경우 (기존 유지)
+        // 2️⃣ 텍스트 역할 설정
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({
@@ -267,14 +258,14 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
 
     } catch (e) { 
-        console.error(e);
+        console.error("PDF 처리 중 오류:", e);
         res.status(500).json({ error: e.message }); 
     } finally { 
         await client.close(); 
     }
 });
 
-// ========== [Cafe24 API 관련 함수 생략없이 포함] ==========
+// ========== [Cafe24 API] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -311,7 +302,7 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 기반 답변 로직 (findAnswer)] ==========
+// ========== [규칙 기반 답변 로직] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
@@ -406,6 +397,7 @@ app.post("/chat", async (req, res) => {
     let gptAnswer = await getGPT3TurboResponse(message, docs);
     gptAnswer = formatResponseText(gptAnswer);
 
+    // [구조대] GPT가 놓친 영상/이미지 복구
     if (docs.length > 0) {
         const bestDoc = docs[0];
         if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) {
