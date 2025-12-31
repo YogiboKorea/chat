@@ -9,6 +9,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const ExcelJS = require("exceljs");
 const multer = require('multer');
 const ftp = require('basic-ftp');
+const dayjs = require('dayjs');
 const pdfParse = require('pdf-extraction');
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -43,7 +44,7 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ★ [시스템 프롬프트] 철저히 데이터 기반 답변만 허용
+// ★ [시스템 프롬프트]
 let currentSystemPrompt = `
 1. 역할: 당신은 '요기보(Yogibo)'의 데이터 기반 상담 봇입니다. 
 2. ★ 절대 원칙 (Strict Mode): 
@@ -57,14 +58,14 @@ let currentSystemPrompt = `
    - HTML 태그(<img...>, <iframe...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== 상담사 연결 링크 (디자인) ==========
+// ========== 상담사 연결 링크 ==========
 const COUNSELOR_LINKS_HTML = `
 <div class="consult-container">
   <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
     <i class="fa-solid fa-triangle-exclamation"></i> 정확한 정보 확인이 필요합니다.
   </p>
   <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
-    죄송합니다. 문의하신 내용은 현재 학습되지 않았거나,<br>정확한 안내를 위해 상담사 확인이 필요합니다.<br>
+    죄송합니다. 문의하신 내용은 현재 학습되지 않았거나,<br>보다 정확한 안내가 필요한 사항입니다.<br>
     아래 버튼을 눌러 <b>1:1 상담</b>을 이용해 주세요.
   </p>
   <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
@@ -77,7 +78,6 @@ const COUNSELOR_LINKS_HTML = `
 </div>
 `;
 
-// ★ 검색 실패 시 보여줄 HTML (이게 바로 뜹니다)
 const FALLBACK_MESSAGE_HTML = `
 <div style="margin-top: 10px;">
   ${COUNSELOR_LINKS_HTML}
@@ -90,7 +90,6 @@ const LOGIN_BTN_HTML = `
 </div>
 `;
 
-// ✅ companyData.json 로드
 const companyDataPath = path.join(__dirname, "json", "companyData.json");
 let companyData = {};
 try { if (fs.existsSync(companyDataPath)) companyData = JSON.parse(fs.readFileSync(companyDataPath, "utf-8")); } catch (e) {}
@@ -114,26 +113,28 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-// ✅ 데이터 갱신 (FAQ + Chat_Send + Image Upload)
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
     await client.connect();
     const db = client.db(DB_NAME);
     const notes = await db.collection("postItNotes").find({}).toArray();
-    const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
+    // 카테고리 정보가 중요하므로 객체에 포함시킵니다.
+    const dynamic = notes.map(n => ({ 
+        c: n.category || "normal", // 기본값 normal
+        q: n.question, 
+        a: n.answer 
+    }));
     
-    // 정적 FAQ + 동적 DB 데이터 합치기
     allSearchableData = [...staticFaqList, ...dynamic];
     
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) currentSystemPrompt = prompts[0].content; 
-    
     console.log(`✅ 데이터 로드 완료: 총 ${allSearchableData.length}개`);
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [핵심] 검색 점수 커트라인 대폭 상향 (엄격한 기준)
+// ✅ [1차 검색] 엄격한 기준 (20점 이상) - 전체 데이터 대상
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -143,12 +144,9 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 1. 질문 완전 일치 (최고 점수)
     if (q === cleanMsg) score += 100;
-    // 2. 포함 관계
     else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
     
-    // 3. 키워드 매칭
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
@@ -158,9 +156,41 @@ function findRelevantContent(msg) {
     return { ...item, score };
   });
 
-  // ★ 점수가 20점 미만이면 "관련 없음"으로 간주하고 빈 배열 반환
-  // 이렇게 하면 어설픈 검색 결과는 아예 GPT에게 넘어가지 않습니다.
   return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+// ✅ [2차 검색] 심층 탐색 (10점 이상) - ★ PDF/일반문의 전용
+// 1차에서 실패했을 때, 'pdf-knowledge'와 'normal' 카테고리만 뒤져서 기준을 낮춰줌
+function findDeepSearchContent(msg) {
+  const kws = msg.split(/\s+/).filter(w => w.length > 1);
+  if (!kws.length && msg.length < 2) return [];
+
+  console.log(`🕵️‍♂️ [심층 탐색] PDF/일반문의 재검색 시도: "${msg}"`);
+
+  // PDF와 일반문의만 필터링
+  const targetData = allSearchableData.filter(item => 
+      item.c === 'pdf-knowledge' || item.c === 'normal'
+  );
+
+  const scored = targetData.map(item => {
+    let score = 0;
+    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
+    const a = (item.a || "").toLowerCase(); // 답변 내용도 검색 대상에 포함 (PDF 본문 검색)
+    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+    
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
+    
+    kws.forEach(w => {
+      const cleanW = w.toLowerCase();
+      if (item.q.toLowerCase().includes(cleanW)) score += 20; // 질문 매칭 가중치
+      if (a.includes(cleanW)) score += 10; // 답변(본문) 매칭 가중치
+    });
+
+    return { ...item, score };
+  });
+
+  // ★ 커트라인을 10점으로 낮춰서 최대한 건져냄
+  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 async function getGPT3TurboResponse(input, context = []) {
@@ -183,21 +213,19 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [규칙 기반 답변 (우선순위 1위)] ==========
+// ... (findAnswer 함수 및 나머지 로직은 그대로 유지) ...
+// (기존 findAnswer 함수 그대로 복사해서 사용하세요 - 생략 없음)
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 1. 상담원 연결 키워드
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
-
-    // 2. 고객센터 정보
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) {
         return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     }
-
-    // 3. companyData.json 기반 규칙 (커버링)
+    
+    // (이하 companyData 규칙들은 기존과 동일)
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -219,8 +247,6 @@ async function findAnswer(userInput, memberId) {
             }
         }
     }
-
-    // 4. companyData.json 기반 규칙 (사이즈)
     if (companyData.sizeInfo) {
         if (normalized.includes("사이즈") || normalized.includes("크기")) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "허기보"];
@@ -231,11 +257,10 @@ async function findAnswer(userInput, memberId) {
             }
         }
     }
-
-    // 5. 배송 및 장바구니/회원정보 (로그인 필요)
+    
+    // 배송/로그인
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -262,7 +287,7 @@ async function findAnswer(userInput, memberId) {
           } catch (e) { return { text: "조회 실패." }; }
         } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-    
+
     return null;
 }
 
@@ -272,30 +297,35 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 기반 답변 (JSON 등) 확인
+    // 1단계: 규칙 기반 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: DB(RAG) 검색
-    const docs = findRelevantContent(message);
+    // 2단계: 엄격 검색 (Score >= 20)
+    let docs = findRelevantContent(message);
+    
+    // ★ [3단계: 패자부활전] 엄격 검색 실패 시, PDF/일반문의 심층 탐색 (Score >= 10)
+    if (docs.length === 0) {
+        docs = findDeepSearchContent(message);
+    }
     
     let gptAnswer = "";
     
-    // ★ [철벽 방어] 검색된 정보가 0개면 -> 바로 상담원 연결 (GPT 안 거침)
+    // 심층 탐색도 실패하면 -> 바로 Fallback
     if (docs.length === 0) {
         gptAnswer = FALLBACK_MESSAGE_HTML;
     } else {
-        // 검색된 정보가 있으면 GPT에게 물어봄
+        // 검색 결과가 있으면 GPT에게 물어봄
         gptAnswer = await getGPT3TurboResponse(message, docs);
         
-        // ★ GPT도 "모르겠음(NO_CONTEXT)" 하면 -> 상담원 연결
+        // GPT가 "NO_CONTEXT"라고 하면 -> Fallback
         if (gptAnswer.includes("NO_CONTEXT")) {
             gptAnswer = FALLBACK_MESSAGE_HTML;
         } else {
-            // 답변 성공 시 이미지/영상 태그 복구
+            // 정상 답변 시 이미지/영상 복구
             if (docs.length > 0) {
                 const bestDoc = docs[0];
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
@@ -311,7 +341,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (나머지 API 동일)
+// (이하 나머지 파일업로드/수정/삭제/로그저장/엑셀/서버실행 API는 동일합니다. 생략 없이 아래에 붙여넣습니다)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
