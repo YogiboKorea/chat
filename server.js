@@ -199,7 +199,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [API 1] PDF 업로드 (RAG 학습) ==========
+// ========== [API 1] PDF 업로드 및 분석 (RAG 학습) ==========
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -262,7 +262,7 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
     }
 });
 
-// ========== [API 2] 이미지 지식 등록 (FTP) ==========
+// ========== [API 2] 이미지 지식 등록 (FTP 업로드) ==========
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -271,7 +271,7 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
 
     try {
-        // FTP 주소 보정
+        // [안전장치] FTP 주소 보정
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
 
         // 1. FTP 접속
@@ -308,7 +308,7 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
         await db.collection("postItNotes").insertOne({
             category: "image-knowledge",
             question: keyword,
-            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
+            answer: `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`,
             createdAt: new Date()
         });
 
@@ -328,8 +328,8 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     }
 });
 
-// ========== [API 3] 게시글 수정 (이미지 교체 포함) ==========
-app.put("/postIt/:id/update_image", upload.single('image'), async (req, res) => {
+// ========== [API 3] 게시글 수정 통합 (텍스트 + 이미지 교체) ==========
+app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     const { id } = req.params;
     const { question, answer } = req.body;
     const file = req.file;
@@ -343,7 +343,7 @@ app.put("/postIt/:id/update_image", upload.single('image'), async (req, res) => 
         
         let newAnswer = answer;
 
-        // ★ 새 이미지가 있으면 FTP 업로드 진행
+        // ★ 새 이미지가 있으면 FTP 업로드 진행 후 답변 교체
         if (file) {
             const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
             await ftpClient.access({
@@ -354,14 +354,8 @@ app.put("/postIt/:id/update_image", upload.single('image'), async (req, res) => 
             });
 
             // 경로 진입
-            try {
-                await ftpClient.ensureDir("web");
-                await ftpClient.ensureDir("chat");
-            } catch (dirErr) {
-                await ftpClient.cd("/");
-                await ftpClient.ensureDir("www");
-                await ftpClient.ensureDir("chat");
-            }
+            try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); }
+            catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
 
             await ftpClient.uploadFrom(file.path, file.filename);
 
@@ -369,7 +363,7 @@ app.put("/postIt/:id/update_image", upload.single('image'), async (req, res) => 
             const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
             const imageUrl = `${publicBase}/${remotePath}/${file.filename}`.replace(/([^:]\/)\/+/g, '$1');
 
-            newAnswer = `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
+            newAnswer = `요청하신 이미지 정보입니다.<br><br><img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`;
 
             fs.unlink(file.path, () => {});
             ftpClient.close();
@@ -420,11 +414,9 @@ app.delete("/postIt/:id", async(req, res) => {
                         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
                         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
                         
-                        // 삭제할 파일 경로 (web/chat/파일명)
-                        // 주의: 만약 www/chat 이라면 경로 수정 필요할 수 있음
+                        // web/chat에서 삭제 시도, 실패시 www/chat 시도
                         await ftpClient.remove(`web/chat/${filename}`)
                             .catch(async () => {
-                                // 실패시 www 폴더에서도 시도
                                 await ftpClient.remove(`www/chat/${filename}`).catch(() => {});
                             });
                             
@@ -634,17 +626,6 @@ app.post("/postIt", async(req,res)=>{
     await c.close();
     await updateSearchableData(); 
     res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} 
-});
-
-app.put("/postIt/:id", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();await c.db(DB_NAME).collection("postItNotes").updateOne({_id:new ObjectId(req.params.id)},{$set:{...req.body,updatedAt:new Date()}});await c.close();await updateSearchableData();res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
-
-// [기존 파일 업로드 API - 호환성 유지]
-app.post('/api/:_any/uploads/image', upload.single('file'), async(req,res)=>{
-  if(!req.file) return res.status(400).json({error:'No file'}); const c=new ftp.Client();
-  try{await c.access({host:YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/,'').replace(/\/$/,''),user:YOGIBO_FTP_ID,password:YOGIBO_FTP_PW,secure:false});
-    const dir=`yogibo/${dayjs().format('YYYY/MM/DD')}`; await c.cd('web/img/temple/uploads').catch(()=>{}); await c.ensureDir(dir); await c.uploadFrom(req.file.path,req.file.filename);
-    res.json({url:`${FTP_PUBLIC_BASE}/uploads/${dir}/${req.file.filename}`.replace(/([^:]\/)\/+/g,'$1')});
-  }catch(e){res.status(500).json({error:e.message})}finally{c.close();fs.unlink(req.file.path,()=>{})}
 });
 
 // [엑셀 다운로드]
