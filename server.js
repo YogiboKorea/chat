@@ -119,93 +119,101 @@ async function updateSearchableData() {
     await client.connect();
     const db = client.db(DB_NAME);
     const notes = await db.collection("postItNotes").find({}).toArray();
-    // 카테고리 정보가 중요하므로 객체에 포함시킵니다.
-    const dynamic = notes.map(n => ({ 
-        c: n.category || "normal", // 기본값 normal
-        q: n.question, 
-        a: n.answer 
-    }));
-    
+    const dynamic = notes.map(n => ({ c: n.category || "normal", q: n.question, a: n.answer }));
     allSearchableData = [...staticFaqList, ...dynamic];
-    
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) currentSystemPrompt = prompts[0].content; 
-    console.log(`✅ 데이터 로드 완료: 총 ${allSearchableData.length}개`);
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// ✅ [1차 검색] 엄격한 기준 (20점 이상) - 전체 데이터 대상
+// 1차 검색 (엄격 20점 이상)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
-
   const scored = allSearchableData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
-    
     if (q === cleanMsg) score += 100;
     else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
-    
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
-
     return { ...item, score };
   });
-
   return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ✅ [2차 검색] 심층 탐색 (10점 이상) - ★ PDF/일반문의 전용
-// 1차에서 실패했을 때, 'pdf-knowledge'와 'normal' 카테고리만 뒤져서 기준을 낮춰줌
+// 2차 검색 (심층 10점 이상) - PDF/일반문의 전용
 function findDeepSearchContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
-
-  console.log(`🕵️‍♂️ [심층 탐색] PDF/일반문의 재검색 시도: "${msg}"`);
-
-  // PDF와 일반문의만 필터링
-  const targetData = allSearchableData.filter(item => 
-      item.c === 'pdf-knowledge' || item.c === 'normal'
-  );
-
+  const targetData = allSearchableData.filter(item => item.c === 'pdf-knowledge' || item.c === 'normal');
   const scored = targetData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
-    const a = (item.a || "").toLowerCase(); // 답변 내용도 검색 대상에 포함 (PDF 본문 검색)
+    const a = (item.a || "").toLowerCase();
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
-    
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
-    
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 20; // 질문 매칭 가중치
-      if (a.includes(cleanW)) score += 10; // 답변(본문) 매칭 가중치
+      if (item.q.toLowerCase().includes(cleanW)) score += 20;
+      if (a.includes(cleanW)) score += 10;
     });
-
     return { ...item, score };
   });
-
-  // ★ 커트라인을 10점으로 낮춰서 최대한 건져냄
   return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 async function getGPT3TurboResponse(input, context = []) {
   if (context.length === 0) return "NO_CONTEXT"; 
-
   const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
   const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${txt}`;
-
   try {
     const res = await axios.post(OPEN_URL, {
       model: FINETUNED_MODEL, messages: [{ role: "system", content: sys }, { role: "user", content: input }], temperature: 0
     }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
-    
     return res.data.choices[0].message.content;
   } catch (e) { return "오류가 발생했습니다."; }
+}
+
+// ========== [Cafe24 API] ==========
+async function apiRequest(method, url, data = {}, params = {}) {
+    try {
+      const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
+      return res.data;
+    } catch (error) {
+      if (error.response?.status === 401) { await refreshAccessToken(); return apiRequest(method, url, data, params); }
+      throw error;
+    }
+}
+async function getOrderShippingInfo(id) {
+  const today = new Date();
+  const start = new Date(); start.setDate(today.getDate() - 14);
+  return apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders`, {}, {
+    member_id: id, start_date: start.toISOString().split('T')[0], end_date: today.toISOString().split('T')[0], limit: 10
+  });
+}
+async function getShipmentDetail(orderId) {
+  const API_URL = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders/${orderId}/shipments`;
+  try {
+    const response = await apiRequest("GET", API_URL, {}, { shop_no: 1 });
+    if (response.shipments && response.shipments.length > 0) {
+      const shipment = response.shipments[0];
+      const carrierMap = {
+        "0019": { name: "롯데 택배", url: "https://www.lotteglogis.com/home/reservation/tracking/linkView?InvNo=" },
+        "0039": { name: "경동 택배", url: "https://kdexp.com/service/delivery/tracking.do?barcode=" },
+        "0023": { name: "경동 택배", url: "https://kdexp.com/service/delivery/tracking.do?barcode=" }
+      };
+      const carrierInfo = carrierMap[shipment.shipping_company_code] || { name: shipment.shipping_company_name || "지정 택배사", url: "" };
+      shipment.shipping_company_name = carrierInfo.name;
+      shipment.tracking_url = (shipment.tracking_no && carrierInfo.url) ? carrierInfo.url + shipment.tracking_no : null;
+      return shipment;
+    }
+    return null;
+  } catch (error) { throw error; }
 }
 
 function formatResponseText(text) { return text || ""; }
@@ -213,19 +221,21 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ... (findAnswer 함수 및 나머지 로직은 그대로 유지) ...
-// (기존 findAnswer 함수 그대로 복사해서 사용하세요 - 생략 없음)
+// ========== [규칙 기반 답변 (배송 포함)] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
+    // 1. 상담사 연결 키워드
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
+
+    // 2. 고객센터 정보
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) {
         return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     }
-    
-    // (이하 companyData 규칙들은 기존과 동일)
+
+    // 3. companyData 규칙 (커버링, 사이즈)
     if (companyData.covering) {
         if (pendingCoveringContext) {
             const types = ["더블", "맥스", "프라임", "슬림", "미디", "미니", "팟", "드롭", "라운저", "피라미드", "롤 미디", "롤 맥스", "카터필러 롤"];
@@ -257,37 +267,48 @@ async function findAnswer(userInput, memberId) {
             }
         }
     }
-    
-    // 배송/로그인
+
+    // 4. 배송 조회 및 회원 정보 로직 (복구 완료!)
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+    
+    // (A) 주문번호로 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
-                const orderId = normalized.match(/\d{8}-\d{7}/)[0]; const ship = await getShipmentDetail(orderId);
+                const orderId = normalized.match(/\d{8}-\d{7}/)[0];
+                const ship = await getShipmentDetail(orderId);
                 if (ship) {
                     let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
                     return { text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.\n🚚 택배사: ${ship.shipping_company_name}\n📄 송장번호: ${trackingDisplay}` };
-                } return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
+                }
+                return { text: "해당 주문번호의 배송 정보를 찾을 수 없습니다." };
             } catch (e) { return { text: "조회 오류가 발생했습니다." }; }
-        } return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+        }
+        return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
+
+    // (B) 최근 주문 내역 조회
     const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
     if (isTracking && !containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
           try {
             const data = await getOrderShippingInfo(memberId);
             if (data.orders?.[0]) {
-              const t = data.orders[0]; const ship = await getShipmentDetail(t.order_id);
+              const t = data.orders[0];
+              const ship = await getShipmentDetail(t.order_id);
               if (ship) {
                  let trackingDisplay = ship.tracking_no ? (ship.tracking_url ? `<a href="${ship.tracking_url}" target="_blank" style="color:#58b5ca; font-weight:bold;">${ship.tracking_no}</a>` : ship.tracking_no) : "등록 대기중";
                  return { text: `최근 주문(<strong>${t.order_id}</strong>)은 <strong>${ship.shipping_company_name}</strong> 배송 중입니다.\n📄 송장번호: ${trackingDisplay}` };
-              } return { text: "최근 주문 확인 중입니다." };
-            } return { text: "최근 2주 내 주문 내역이 없습니다." };
+              }
+              return { text: "최근 주문 확인 중입니다." };
+            }
+            return { text: "최근 2주 내 주문 내역이 없습니다." };
           } catch (e) { return { text: "조회 실패." }; }
-        } return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+        }
+        return { text: `배송정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-
+    
     return null;
 }
 
@@ -297,35 +318,29 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 기반 확인
+    // 1단계: 규칙 기반 (배송, 커버링 등)
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: 엄격 검색 (Score >= 20)
+    // 2단계: 엄격 검색
     let docs = findRelevantContent(message);
     
-    // ★ [3단계: 패자부활전] 엄격 검색 실패 시, PDF/일반문의 심층 탐색 (Score >= 10)
+    // 3단계: 패자부활전 (PDF/일반문의)
     if (docs.length === 0) {
         docs = findDeepSearchContent(message);
     }
     
     let gptAnswer = "";
-    
-    // 심층 탐색도 실패하면 -> 바로 Fallback
     if (docs.length === 0) {
         gptAnswer = FALLBACK_MESSAGE_HTML;
     } else {
-        // 검색 결과가 있으면 GPT에게 물어봄
         gptAnswer = await getGPT3TurboResponse(message, docs);
-        
-        // GPT가 "NO_CONTEXT"라고 하면 -> Fallback
         if (gptAnswer.includes("NO_CONTEXT")) {
             gptAnswer = FALLBACK_MESSAGE_HTML;
         } else {
-            // 정상 답변 시 이미지/영상 복구
             if (docs.length > 0) {
                 const bestDoc = docs[0];
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
@@ -341,7 +356,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (이하 나머지 파일업로드/수정/삭제/로그저장/엑셀/서버실행 API는 동일합니다. 생략 없이 아래에 붙여넣습니다)
+// (이하 나머지 파일 처리, API 등은 동일)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
