@@ -44,13 +44,13 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ★ [시스템 프롬프트] 철벽 모드
+// ★ [시스템 프롬프트] 철벽 모드 강화
 let currentSystemPrompt = `
-1. 역할: 당신은 '요기보(Yogibo)'의 데이터 검색 봇입니다. 
+1. 역할: 당신은 오직 '요기보(Yogibo)' 제품과 서비스에 대해서만 답변하는 AI 봇입니다.
 2. ★ 절대 원칙 (Strict Rules): 
+   - 당신의 사전 지식(IT, 상식, 타 브랜드 등)을 절대 사용하지 마세요.
    - 오직 아래 제공되는 [참고 정보]에 있는 내용만으로 답변하세요.
-   - [참고 정보]에 없는 내용은 절대 지어내거나 외부 지식(사전 지식)을 사용하지 마세요.
-   - 답변할 정보가 부족하면 오직 "NO_CONTEXT" 라고만 출력하세요.
+   - **[참고 정보]와 사용자 질문의 연관성이 낮으면, 억지로 대답하지 말고 무조건 "NO_CONTEXT" 라고만 출력하세요.**
 3. 데이터 우선순위:
    - 내가 제공해준 정보가 절대적인 정답입니다.
 4. 포맷: 
@@ -58,15 +58,15 @@ let currentSystemPrompt = `
    - HTML 태그(<img...>)는 변경하지 말고 그대로 출력하세요.
 `;
 
-// ========== 상담사 연결 링크 (디자인) ==========
+// ========== 상담사 연결 링크 ==========
 const COUNSELOR_LINKS_HTML = `
 <div class="consult-container">
   <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
     <i class="fa-solid fa-triangle-exclamation"></i> 정확한 정보 확인이 필요합니다.
   </p>
   <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
-    문의하신 내용은 요기보 데이터에 없거나,<br>정확한 안내를 위해 상담사 확인이 필요합니다.<br>
-    아래 버튼을 눌러 <b>1:1 상담</b>을 이용해 주세요.
+    문의하신 내용은 요기보 서비스와 관련이 없거나,<br>아직 학습되지 않은 정보입니다.<br>
+    정확한 안내를 위해 <b>상담사</b>에게 문의해주세요.
   </p>
   <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
@@ -78,14 +78,14 @@ const COUNSELOR_LINKS_HTML = `
 </div>
 `;
 
-// ★ 검색 실패 시 보여줄 메시지 (DB에 없을 때)
+// ★ 검색 실패 시 보여줄 메시지 (토큰 절약용)
 const FALLBACK_MESSAGE_HTML = `
 <div style="margin-top: 10px;">
   ${COUNSELOR_LINKS_HTML}
 </div>
 `;
 
-// ★ 되묻기 메시지 (검색은 됐으나 모호할 때)
+// ★ 되묻기 메시지
 const RETRY_MESSAGE_HTML = `
 <div style="margin-top: 10px;">
   <p style="font-size:14px; color:#333; font-weight:bold;">🤔 질문을 조금 더 구체적으로 말씀해 주시겠어요?</p>
@@ -129,15 +129,14 @@ async function updateSearchableData() {
     await client.connect();
     const db = client.db(DB_NAME);
     const notes = await db.collection("postItNotes").find({}).toArray();
-    // 데이터 소스 구분 (normal: 일반, pdf-knowledge: 문서)
-    const dynamic = notes.map(n => ({ c: n.category || "normal", q: n.question, a: n.answer }));
+    const dynamic = notes.map(n => ({ c: n.category || "etc", q: n.question, a: n.answer }));
     allSearchableData = [...staticFaqList, ...dynamic];
     const prompts = await db.collection("systemPrompts").find({}).sort({createdAt: -1}).limit(1).toArray();
     if (prompts.length > 0) currentSystemPrompt = prompts[0].content; 
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
 
-// 1차 검색 (엄격) - 관리자/FAQ 우선
+// ✅ [핵심 수정] 1차 검색 커트라인 상향 (20점 -> 40점)
 function findRelevantContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -147,21 +146,21 @@ function findRelevantContent(msg) {
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    if (q === cleanMsg) score += 100;
-    else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
-    
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 15;
       if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
+    const dbKeywords = (item.q || "").split(/\s+/).filter(w => w.length > 1);
+    dbKeywords.forEach(dbK => { if (msg.includes(dbK)) score += 10; });
     return { ...item, score };
   });
-  // 20점 미만은 아예 무시
-  return scored.filter(i => i.score >= 20).sort((a, b) => b.score - a.score).slice(0, 3);
+  // ★ 중요: 40점 미만은 무시 (어설픈 단어 매칭 차단)
+  return scored.filter(i => i.score >= 40).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// 2차 검색 (심층) - PDF/일반문의 전용
+// ✅ [핵심 수정] 2차 검색 커트라인 상향 (10점 -> 30점)
 function findDeepSearchContent(msg) {
   const kws = msg.split(/\s+/).filter(w => w.length > 1);
   if (!kws.length && msg.length < 2) return [];
@@ -169,11 +168,9 @@ function findDeepSearchContent(msg) {
   const scored = targetData.map(item => {
     let score = 0;
     const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
-    const a = (item.a || "").toLowerCase(); // 답변(본문) 내용도 검색
+    const a = (item.a || "").toLowerCase();
     const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
-    
     if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 40;
-    
     kws.forEach(w => {
       const cleanW = w.toLowerCase();
       if (item.q.toLowerCase().includes(cleanW)) score += 20;
@@ -181,8 +178,8 @@ function findDeepSearchContent(msg) {
     });
     return { ...item, score };
   });
-  // 10점 이상만 인정
-  return scored.filter(i => i.score >= 10).sort((a, b) => b.score - a.score).slice(0, 3);
+  // ★ 중요: 30점 미만은 무시 (패자부활전도 엄격하게)
+  return scored.filter(i => i.score >= 30).sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
 async function getGPT3TurboResponse(input, context = []) {
@@ -202,7 +199,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// ========== [Cafe24 API] ==========
+// ========== [Cafe24 API 공통 함수] ==========
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -212,6 +209,41 @@ async function apiRequest(method, url, data = {}, params = {}) {
       throw error;
     }
 }
+
+async function searchProductOnCafe24(keyword) {
+    try {
+        let searchKeyword = keyword;
+        if (["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라", "플랜트"].includes(keyword)) {
+            searchKeyword = `요기보 ${keyword}`;
+        }
+
+        const response = await apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products`, {}, {
+            product_name: searchKeyword, display: 'T', selling: 'T', limit: 5
+        });
+
+        if (response.products && response.products.length > 0) {
+            const exclusionKeywords = ["커버", "이너", "리필", "충전재", "세탁", "악세서리", "증정"];
+            let bestMatch = response.products.find(p => {
+                const name = p.product_name;
+                return !exclusionKeywords.some(badWord => name.includes(badWord));
+            });
+            if (!bestMatch) bestMatch = response.products[0];
+
+            const detailUrl = `https://yogibo.kr/product/detail.html?product_no=${bestMatch.product_no}`;
+            return {
+                name: bestMatch.product_name,
+                url: detailUrl,
+                price: bestMatch.price,
+                image: bestMatch.tiny_image
+            };
+        }
+        return null;
+    } catch (e) {
+        console.error("Cafe24 상품 검색 실패:", e.message);
+        return null;
+    }
+}
+
 async function getOrderShippingInfo(id) {
   const today = new Date();
   const start = new Date(); start.setDate(today.getDate() - 14);
@@ -243,12 +275,16 @@ async function getShipmentDetail(orderId) {
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // ★ [1차 방어] 요기보와 무관한 키워드 원천 차단 (토큰 절약)
-    // 파이썬, 노드, 주식 등등...
-    const blockKeywords = ["파이썬", "python", "노드", "node", "자바", "코딩", "주식", "비트코인", "날씨", "정치", "대통령", "게임", "영화", "맛집"];
+    // ★ [1차 방어] IT/개발/일반상식 키워드 대폭 강화 (토큰 절약)
+    const blockKeywords = [
+        "파이썬", "python", "노드", "node", "자바", "java", "script", "스크립트", 
+        "코딩", "sql", "mysql", "db", "데이터베이스", "서버", "server", "error", 
+        "주식", "비트코인", "투자", "날씨", "정치", "대통령", "게임", "영화", 
+        "맛집", "노래", "여행", "번역", "영어", "수학", "과학", "역사"
+    ];
     for (let badWord of blockKeywords) {
         if (normalized.toLowerCase().includes(badWord)) {
-            return { text: `죄송합니다. 저는 **요기보(Yogibo)** 제품과 서비스에 대해서만 안내해 드릴 수 있습니다. 😅<br>요기보에 대해 궁금한 점을 물어봐 주세요!` };
+            return { text: `죄송합니다. 저는 **요기보(Yogibo)** 제품 상담만 도와드릴 수 있어요. 😅<br>요기보에 대해 궁금한 점이 있다면 물어봐 주세요!` };
         }
     }
 
@@ -257,7 +293,7 @@ async function findAnswer(userInput, memberId) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
 
-    // 2. 충전 = 비즈 리필
+    // 2. 충전
     if (normalized.includes("충전")) {
         return { 
             text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br><br>
@@ -268,17 +304,13 @@ async function findAnswer(userInput, memberId) {
         };
     }
 
-    // ★ 3. 제품명 검색 URL 자동 생성
+    // 3. Cafe24 스마트 상품 검색
     const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라", "플랜트"];
-    
     for (const product of productKeywords) {
         if (normalized.includes(product)) {
-            // 제품명 + 의도 키워드
             if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래") || normalized.includes("구매") || normalized.includes("알고") || normalized.includes("정보")) {
-                
                 const searchKeyword = `요기보 ${product}`;
                 const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(searchKeyword)}`;
-                
                 return {
                     text: `찾으시는 <b>'${product}'</b> 관련 정보를 찾았습니다.<br>아래 링크를 클릭하면 다양한 제품 목록을 보실 수 있어요! 👇<br><br>
                     <a href="${searchUrl}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center; text-decoration:none;">
@@ -289,7 +321,7 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 4. 없는 제품 차단 (롤 메이트 등)
+    // 4. 없는 제품 차단
     const unknownKeywords = ["롤 메이트", "롤메이트", "전기", "배터리", "청소기", "이케아", "무인양품", "한샘"];
     for (let word of unknownKeywords) {
         if (normalized.includes(word)) {
@@ -297,14 +329,14 @@ async function findAnswer(userInput, memberId) {
         }
     }
 
-    // 5. 일반 규칙 (고객센터, 장바구니 등)
+    // 5. 일반 규칙
     if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) {
         return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊\n운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
     }
     if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동하시겠어요?\n<a href="/order/basket.html" style="color:#58b5ca; font-weight:bold;">🛒 장바구니 바로가기</a>` } : { text: `장바구니를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     if (normalized.includes("회원정보") || normalized.includes("정보수정")) return isUserLoggedIn(memberId) ? { text: `회원정보 변경은 마이페이지에서 가능합니다.\n<a href="/member/modify.html" style="color:#58b5ca; font-weight:bold;">🔧 회원정보 수정하기</a>` } : { text: `회원정보를 확인하시려면 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     
-    // 6. 배송 조회
+    // 6. 배송
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -368,42 +400,41 @@ async function findAnswer(userInput, memberId) {
     return null;
 }
 
-// ========== [메인 Chat - 여기가 핵심 방어선] ==========
+// ========== [메인 Chat] ==========
 app.post("/chat", async (req, res) => {
   const { message, memberId } = req.body;
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 기반 답변 확인 (여기서 '파이썬' 등은 이미 걸러짐)
+    // 1단계: 규칙 기반 답변 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
        if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: DB 검색
+    // 2단계: DB 엄격 검색 (40점 이상만)
     let docs = findRelevantContent(message);
     
-    // 3단계: 패자부활 (PDF/일반문의)
+    // 3단계: 패자부활 (30점 이상만)
     if (docs.length === 0) {
         docs = findDeepSearchContent(message);
     }
     
     let gptAnswer = "";
     
-    // ★ [철벽 방어] DB에 관련된 내용이 하나도 없으면? -> API 호출 금지 (토큰 0원)
+    // ★ [철벽 방어] DB 검색 결과 0개 -> API 호출 원천 봉쇄 (토큰 비용 0원)
     if (docs.length === 0) {
-        // 관련된 정보가 없으니 상담원 연결로 유도
         gptAnswer = FALLBACK_MESSAGE_HTML;
     } else {
-        // DB에 뭔가 있을 때만 API 호출
+        // 검색된 내용이 있을 때만 API 호출
         gptAnswer = await getGPT3TurboResponse(message, docs);
         
-        // API 호출했는데도 "모르겠다"고 하면
+        // GPT가 "NO_CONTEXT" 반환 시 차단
         if (gptAnswer.includes("NO_CONTEXT")) {
-            gptAnswer = RETRY_MESSAGE_HTML; // 혹은 FALLBACK
+            gptAnswer = FALLBACK_MESSAGE_HTML;
         } else {
-            // 정상 답변 (이미지 복구)
+            // 정상 답변일 때만 이미지/영상 태그 복구
             if (docs.length > 0) {
                 const bestDoc = docs[0];
                 if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
@@ -419,7 +450,7 @@ app.post("/chat", async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
-// (이하 나머지 파일 업로드 등의 API는 기존과 동일)
+// (나머지 파일 업로드 등의 API는 기존과 동일하게 유지)
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
