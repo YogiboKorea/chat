@@ -81,10 +81,10 @@ const COUNSELOR_LINKS_HTML = `
 // ========== HTML 템플릿 ==========
 const COUNSELOR_LINKS_HTML_CALL = `
 <div class="consult-container" style="">
-  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao" style="cursor:pointer">>
+  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao" style="cursor:pointer">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
   </a>
-  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" class="consult-btn naver" style="cursor:pointer">>
+  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" class="consult-btn naver" style="cursor:pointer">
      <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
   </a>
 </div>
