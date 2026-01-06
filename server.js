@@ -303,7 +303,7 @@ async function findAnswer(userInput, memberId) {
     }
 
     // 2. 상담사 연결
-    if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")) {
+    if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")|| normalized.includes("상담사 연결")|| normalized.includes("고객센터 연결")) {
         return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
     }
 
