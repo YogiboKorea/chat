@@ -42,11 +42,23 @@ const upload = multer({
 });
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__dirname, 'uploads'));
 
-// ✅ 글로벌 변수 (통합 검색 데이터)
+// ✅ 상품 데이터 (추천 시스템용 하드코딩 데이터)
+const yogiboProducts = [
+    { id: "max", name: "요기보 맥스", category: "소파", price: 389000, features: ["2인용", "침대대용", "눕기"], useCase: ["TV", "낮잠", "게임"], productUrl: "https://yogibo.kr/product/detail.html?product_no=123" },
+    { id: "midi", name: "요기보 미디", category: "소파", price: 299000, features: ["1인용", "원룸", "가성비"], useCase: ["독서", "휴식", "게임"], productUrl: "https://yogibo.kr/product/detail.html?product_no=124" },
+    { id: "mini", name: "요기보 미니", category: "소파", price: 229000, features: ["1인용", "소형", "아이들"], useCase: ["보조의자", "아이방"], productUrl: "https://yogibo.kr/product/detail.html?product_no=125" },
+    { id: "support", name: "요기보 서포트", category: "악세서리", price: 159000, features: ["등받이", "팔걸이", "수유쿠션"], useCase: ["소파보조", "독서", "수유"], productUrl: "https://yogibo.kr/product/detail.html?product_no=126" },
+    { id: "roll", name: "요기보 롤 맥스", category: "악세서리", price: 169000, features: ["바디필로우", "긴베개"], useCase: ["수면", "등받이"], productUrl: "https://yogibo.kr/product/detail.html?product_no=127" },
+    { id: "lounger", name: "요기보 라운저", category: "소파", price: 269000, features: ["1인용", "등받이형", "게임"], useCase: ["게임", "영화"], productUrl: "https://yogibo.kr/product/detail.html?product_no=128" },
+    { id: "shorty", name: "요기보 쇼티", category: "소파", price: 199000, features: ["1인용", "슬림", "공간절약"], useCase: ["원룸", "휴식"], productUrl: "https://yogibo.kr/product/detail.html?product_no=129" },
+    { id: "pod", name: "요기보 팟", category: "소파", price: 289000, features: ["1인용", "물방울", "감싸는"], useCase: ["독서", "명상"], productUrl: "https://yogibo.kr/product/detail.html?product_no=130" }
+];
+
+// ✅ 전역 변수
 let pendingCoveringContext = false;
 let allSearchableData = []; 
 
-// ★ [시스템 프롬프트] GPT에게 "판단" 역할을 부여
+// ★ [시스템 프롬프트]
 let currentSystemPrompt = `
 1. 역할: 당신은 '요기보(Yogibo)'의 AI 상담원입니다.
 2. ★ 중요 임무:
@@ -75,21 +87,7 @@ const COUNSELOR_LINKS_HTML = `
      <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
   </a>
 </div>
-`
-
-
-// ========== HTML 템플릿 ==========
-const COUNSELOR_LINKS_HTML_CALL = `
-<div class="consult-container" style="">
-  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao" style="cursor:pointer">
-     <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
-  </a>
-  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" class="consult-btn naver" style="cursor:pointer">
-     <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
-  </a>
-</div>
-`
-;
+`;
 
 const FALLBACK_MESSAGE_HTML = `<div style="margin-top: 10px;">${COUNSELOR_LINKS_HTML}</div>`;
 const LOGIN_BTN_HTML = `<div style="margin-top:15px;"><a href="/member/login.html" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center;">로그인 하러 가기 →</a></div>`;
@@ -123,7 +121,7 @@ async function saveTokensToDB(at, rt) {
 }
 async function refreshAccessToken() { await getTokensFromDB(); return accessToken; }
 
-// ★ [핵심] 모든 데이터를 '검색 가능한 형태'로 통합하는 함수
+// ★ [핵심] 모든 데이터를 '검색 가능한 형태'로 통합하는 함수 (RAG)
 async function updateSearchableData() {
   const client = new MongoClient(MONGODB_URI);
   try {
@@ -160,15 +158,6 @@ async function updateSearchableData() {
         });
     }
 
-        // ★ 중복 제거 (질문 기준)
-    const seen = new Set();
-    allSearchableData = [...faqData, ...dbData, ...jsonData].filter(item => {
-        const key = item.q.toLowerCase().replace(/\s+/g, "");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-
     // 4. 모든 데이터 합치기
     allSearchableData = [...faqData, ...dbData, ...jsonData];
     
@@ -180,147 +169,56 @@ async function updateSearchableData() {
 
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
-// ★ [개선된 검색 로직]
+
+// ★ 통합 검색 로직 (5점 이상이면 후보군으로 선정)
 function findAllRelevantContent(msg) {
-    const kws = msg.split(/\s+/).filter(w => w.length > 1);
-    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "").replace(/[?!！？.]/g, "");
+  const kws = msg.split(/\s+/).filter(w => w.length > 1); // 2글자 이상 키워드
+  if (!kws.length && msg.length < 2) return [];
+
+  const scored = allSearchableData.map(item => {
+    let score = 0;
+    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
+    const a = (item.a || "").toLowerCase();
+    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
     
-    // 1. 의도 분류 (카테고리 힌트)
-    const intentMap = {
-      size: ["사이즈", "크기", "규격", "치수"],
-      covering: ["커버링", "씌우", "교체방법"],
-      laundry: ["세탁", "빨래", "건조"],
-      delivery: ["배송", "배달", "수령"],
-      refund: ["환불", "반품", "교환"],
-      service: ["AS", "수리", "고장", "불량"]
-    };
+    // 1. 질문 완전 일치 (100점)
+    if (q === cleanMsg) score += 100;
+    // 2. 포함 관계 (50점)
+    else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 50;
     
-    let detectedIntent = null;
-    for (const [intent, keywords] of Object.entries(intentMap)) {
-      if (keywords.some(k => cleanMsg.includes(k))) {
-        detectedIntent = intent;
-        break;
-      }
-    }
-  
-    const scored = allSearchableData.map(item => {
-      let score = 0;
-      const q = (item.q || "").toLowerCase().replace(/\s+/g, "").replace(/[?!！？.]/g, "");
-      const a = (item.a || "").toLowerCase();
-      const category = item.category || "";
-      
-      // ★ 카테고리 일치 보너스 (30점)
-      if (detectedIntent && category.includes(detectedIntent)) {
-        score += 30;
-      }
-      
-      // ★ 질문 완전 일치 (100점)
-      if (q === cleanMsg) score += 100;
-      
-      // ★ 핵심 키워드 조합 매칭 (50점)
-      // 예: "맥스" + "사이즈" 둘 다 있어야 높은 점수
-      const matchedKws = kws.filter(w => q.includes(w.toLowerCase()));
-      if (matchedKws.length >= 2) {
-        score += 50;
-      } else if (matchedKws.length === 1 && kws.length === 1) {
-        score += 30; // 단일 키워드지만 전체 일치
-      }
-      
-      // ★ 부분 포함 (기존보다 낮은 점수)
-      kws.forEach(w => {
-        const cleanW = w.toLowerCase();
-        if (q.includes(cleanW)) score += 10; // 20 → 10으로 낮춤
-        // 답변 매칭은 제외 (노이즈 원인)
-      });
-  
-      return { ...item, score };
+    // 3. 키워드 매칭 (질문: 20점, 답변: 5점)
+    kws.forEach(w => {
+      const cleanW = w.toLowerCase();
+      if (item.q.toLowerCase().includes(cleanW)) score += 20;
+      if (item.a.toLowerCase().includes(cleanW)) score += 5;
     });
-  
-    // ★ 임계값 상향 (5 → 25점)
-    // ★ 상위 3개로 제한 (5 → 3개)
-    return scored
-      .filter(i => i.score >= 25)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-  }
-  
 
-// ★ [2단계 검증 시스템]
+    return { ...item, score };
+  });
+
+  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
+// GPT 호출 (일반 질문용)
 async function getGPT3TurboResponse(input, context = []) {
-    if (context.length === 0) return "NO_CONTEXT";
-  
-    // ────────────────────────────────────────
-    // 1단계: GPT에게 "관련 있는 데이터 번호"만 물어봄
-    // ────────────────────────────────────────
-    const candidateList = context.map((item, idx) => 
-      `${idx + 1}. ${item.q}`
-    ).join("\n");
-  
-    const filterPrompt = `사용자 질문: "${input}"
-  
-  아래 후보 중 이 질문에 답변하는 데 **직접적으로 관련 있는 번호**만 골라주세요.
-  관련 없으면 "없음"이라고 답하세요.
-  
-  [후보 목록]
-  ${candidateList}
-  
-  답변 형식: 숫자만 (예: 1 또는 1,3)`;
-  
-    try {
-      // 가벼운 필터링용 호출 (토큰 적게 사용)
-      const filterRes = await axios.post(OPEN_URL, {
-        model: "gpt-3.5-turbo",  // 저렴한 모델로 필터링
-        messages: [{ role: "user", content: filterPrompt }],
-        temperature: 0,
-        max_tokens: 20  // 숫자만 받으면 되니까 짧게
-      }, { headers: { Authorization: `Bearer ${API_KEY}` } });
-  
-      const filterAnswer = filterRes.data.choices[0].message.content.trim();
-      
-      // "없음"이면 바로 NO_CONTEXT
-      if (filterAnswer === "없음" || filterAnswer.toLowerCase() === "none") {
-        return "NO_CONTEXT";
-      }
-  
-      // ────────────────────────────────────────
-      // 2단계: 선택된 데이터만 가지고 최종 답변 생성
-      // ────────────────────────────────────────
-      const selectedIndexes = filterAnswer.match(/\d+/g)?.map(n => parseInt(n) - 1) || [];
-      const filteredContext = selectedIndexes
-        .filter(i => i >= 0 && i < context.length)
-        .map(i => context[i]);
-  
-      // 필터링 후 남은 게 없으면
-      if (filteredContext.length === 0) {
-        return "NO_CONTEXT";
-      }
-  
-      // 검증된 데이터만으로 답변 생성
-      const contextText = filteredContext
-        .map((item, idx) => `[정보 ${idx + 1}]\nQ: ${item.q}\nA: ${item.a}`)
-        .join("\n\n");
-  
-      const finalPrompt = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
-  
-      const res = await axios.post(OPEN_URL, {
-        model: FINETUNED_MODEL,
-        messages: [
-          { role: "system", content: finalPrompt },
+  if (context.length === 0) return "NO_CONTEXT"; 
+
+  const contextText = context.map((i, idx) => `[정보 ${idx+1}] (출처: ${i.source})\nQ: ${i.q}\nA: ${i.a}`).join("\n\n");
+  const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
+
+  try {
+    const res = await axios.post(OPEN_URL, {
+      model: FINETUNED_MODEL, 
+      messages: [
+          { role: "system", content: sys }, 
           { role: "user", content: input }
-        ],
-        temperature: 0
-      }, { headers: { Authorization: `Bearer ${API_KEY}` } });
-  
-      return res.data.choices[0].message.content;
-  
-    } catch (e) {
-      console.error("GPT 호출 오류:", e.message);
-      return "오류가 발생했습니다.";
-    }
-  }
-  
-
-
+      ], 
+      temperature: 0 
+    }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
+    
+    return res.data.choices[0].message.content;
+  } catch (e) { return "오류가 발생했습니다."; }
+}
 
 // 유틸 함수들
 function formatResponseText(text) { return text || ""; }
@@ -328,7 +226,7 @@ function normalizeSentence(s) { return s.replace(/[?!！？]/g, "").replace(/없
 function containsOrderNumber(s) { return /\d{8}-\d{7}/.test(s); }
 function isUserLoggedIn(id) { return id && id !== "null" && id !== "undefined" && String(id).trim() !== ""; }
 
-// Cafe24 API 관련 함수
+// Cafe24 API 공통
 async function apiRequest(method, url, data = {}, params = {}) {
     try {
       const res = await axios({ method, url, data, params, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Cafe24-Api-Version': CAFE24_API_VERSION } });
@@ -338,6 +236,8 @@ async function apiRequest(method, url, data = {}, params = {}) {
       throw error;
     }
 }
+
+// 배송 조회 API
 async function getOrderShippingInfo(id) {
   const today = new Date(); const start = new Date(); start.setDate(today.getDate() - 14);
   return apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders`, {}, {
@@ -358,45 +258,131 @@ async function getShipmentDetail(orderId) {
   } catch (error) { throw error; }
 }
 
-// ========== [규칙 기반 답변] ==========
+// ★ [신규] 회원 구매 이력 조회 (최근 2개월)
+async function getMemberPurchaseHistory(memberId) {
+    if (!memberId || memberId === "null") return null;
+    try {
+        const today = new Date();
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(today.getMonth() - 2); 
+
+        const response = await apiRequest("GET", `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/orders`, {}, {
+            member_id: memberId,
+            start_date: twoMonthsAgo.toISOString().split('T')[0],
+            end_date: today.toISOString().split('T')[0],
+            limit: 20,
+            embed: "items" 
+        });
+
+        if (!response.orders) return null;
+
+        const history = { categories: [], products: [], colors: [] };
+        response.orders.forEach(order => {
+            order.items.forEach(item => {
+                history.products.push(item.product_name);
+                if (item.product_name.includes("맥스") || item.product_name.includes("미디") || item.product_name.includes("빈백")) history.categories.push("sofa");
+                if (item.product_name.includes("서포트") || item.product_name.includes("롤")) history.categories.push("accessory");
+                if (item.option_value) history.colors.push(item.option_value); 
+            });
+        });
+        return history;
+    } catch (e) {
+        console.error("구매이력 조회 실패:", e.message);
+        return null;
+    }
+}
+
+// ★ [신규] AI 상품 추천 엔진
+async function recommendProducts(userMsg, memberId) {
+    const keywords = userMsg.toLowerCase();
+    const purchaseHistory = await getMemberPurchaseHistory(memberId);
+    
+    // 점수 계산
+    const scored = yogiboProducts.map(p => {
+        let score = 0;
+        let reasons = [];
+
+        // (1) 키워드 매칭
+        if (keywords.includes("게임") && p.useCase.includes("게임")) { score += 30; reasons.push("🎮 게임할 때 편해요"); }
+        if (keywords.includes("잠") && p.useCase.includes("수면")) { score += 30; reasons.push("😴 꿀잠 보장"); }
+        if (keywords.includes("원룸") && p.features.includes("원룸")) { score += 30; reasons.push("🏠 좁은 공간 활용 굿"); }
+        if (keywords.includes("가족") && p.features.includes("2인용")) { score += 30; reasons.push("👨‍👩‍👧 가족과 함께"); }
+
+        // (2) 구매 이력 기반 추천 (Cross-Selling)
+        if (purchaseHistory) {
+            const boughtSofa = purchaseHistory.categories.includes("sofa");
+            const boughtAccessory = purchaseHistory.categories.includes("accessory");
+
+            // 소파는 샀는데 악세서리가 없다면? -> 서포트 강력 추천
+            if (boughtSofa && !boughtAccessory && p.category === "악세서리") {
+                score += 50; 
+                reasons.push("✨ 구매하신 빈백과 함께 쓰면 편안함이 2배!");
+            }
+            // 악세서리만 샀다면? -> 소파 추천
+            if (!boughtSofa && boughtAccessory && p.category === "소파") {
+                score += 40;
+                reasons.push("✨ 가지고 계신 쿠션과 잘 어울리는 소파예요");
+            }
+        }
+
+        if (p.id === "max" || p.id === "support") score += 10;
+        return { ...p, score, reasons };
+    });
+
+    // 상위 3개 선정
+    const top3 = scored.sort((a, b) => b.score - a.score).slice(0, 3);
+    
+    // GPT에게 추천 멘트 작성 요청
+    const prompt = `
+    당신은 요기보 세일즈 매니저입니다.
+    고객 질문: "${userMsg}"
+    구매 이력: ${purchaseHistory ? JSON.stringify(purchaseHistory.products) : "없음"}
+    추천 상품 목록:
+    ${top3.map(p => `- ${p.name} (${p.price}원): ${p.reasons.join(", ")}`).join("\n")}
+    
+    위 정보를 바탕으로 고객에게 자연스럽게 상품을 추천하는 멘트를 작성해주세요.
+    구매 이력이 있다면 "지난번 구매하신 OO과 함께 쓰시면 좋아요" 같은 멘트를 꼭 넣어주세요.
+    `;
+
+    try {
+        const gptRes = await axios.post(OPEN_URL, {
+            model: FINETUNED_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.7
+        }, { headers: { Authorization: `Bearer ${API_KEY}` } });
+
+        let answer = gptRes.data.choices[0].message.content;
+        const buttons = top3.map(p => `<a href="${p.productUrl}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; display:inline-block; margin:5px; text-decoration:none;">🛍️ ${p.name} 보러가기</a>`).join("");
+        return answer + "<br><br>" + buttons;
+    } catch (e) { return "추천 상품을 불러오는 중 오류가 발생했습니다."; }
+}
+
+// ========== [규칙 기반 답변 & 추천 라우팅] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // ★ 1. 금지어 필터 (토큰 절약 & 엉뚱한 답변 차단)
-    const blockKeywords = ["파이썬", "python", "노드", "node", "자바", "코딩", "sql", "mysql", "db", "주식", "비트코인", "날씨", "정치", "게임", "영화", "맛집"];
+    // 1. 금지어 필터
+    const blockKeywords = ["파이썬", "코딩", "주식", "비트코인", "날씨", "정치"];
     for (let badWord of blockKeywords) {
-        if (normalized.toLowerCase().includes(badWord)) {
-            return { text: `죄송합니다. 저는 **요기보(Yogibo)** 제품 상담만 도와드릴 수 있어요. 😅<br>요기보에 대해 궁금한 점이 있다면 물어봐 주세요!` };
-        }
+        if (normalized.includes(badWord)) return { text: "죄송합니다. 요기보 제품과 관련된 질문만 답변 가능합니다. 😅" };
     }
 
-    // 2. 상담사 연결
-    if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")|| normalized.includes("상담사 연결")|| normalized.includes("고객센터 연결")|| normalized.includes("고객센터 연결 해줘")) {
-        return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML_CALL}` };
+    // 2. ★ 추천 질문 감지 ("추천", "뭐가 좋아", "골라줘")
+    const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
+    if (recommendKeywords.some(k => normalized.includes(k))) {
+        const recommendResult = await recommendProducts(userInput, memberId);
+        return { text: recommendResult };
     }
 
-    // 3. 충전 = 비즈 리필
-    if (normalized.includes("충전")|| normalized.includes("리필 비즈")|| normalized.includes("리필")) {
-        return { text: `비즈 충전을 찾으시는걸까요? 해당 링크를 통해 자세한 내용을 확인하실수 있습니다.<br><a href="https://yogibo.kr/event/yogibo/biz_cover.html" target="_blank">[비즈 충전방법]</a>` };
+    // 3. 상담사 연결
+    if (normalized.includes("상담사") || normalized.includes("상담원")) return { text: `상담사를 연결해 드릴까요?${COUNSELOR_LINKS_HTML}` };
+
+    // 4. 충전 = 비즈 리필
+    if (normalized.includes("충전")) {
+        return { text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br>요기보는 전자기기가 아닙니다! <b>'충전'</b>은 푹 꺼진 소파에 <b>'비즈(충전재)'</b>를 채워넣는 것을 의미해요.<br><a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` };
     }
 
-    // 4. 상품 검색 링크 생성
-    const productKeywords = ["슬림", "맥스", "더블", "미디", "미니", "팟", "드롭", "피라미드", "라운저", "줄라", "쇼티", "롤", "서포트", "카터필러", "바디필로우", "스퀴지보", "트레이보", "모듈라", "플랜트"];
-    for (const product of productKeywords) {
-        if (normalized.includes(product)) {
-            if (normalized.includes("url") || normalized.includes("주소") || normalized.includes("링크") || normalized.includes("검색") || normalized.includes("찾아") || normalized.includes("보여") || normalized.includes("살래") || normalized.includes("구매") || normalized.includes("알고") || normalized.includes("정보")) {
-                const searchKeyword = `요기보 ${product}`;
-                const searchUrl = `http://yogibo.kr/product/search.html?order_by=favor&banner_action=&keyword=${encodeURIComponent(searchKeyword)}`;
-                return { text: `찾으시는 <b>'${product}'</b> 정보를 찾았습니다.<br>아래 링크에서 확인해 보세요! 👇<br><br><a href="${searchUrl}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center; text-decoration:none;">🔍 ${product} 검색 결과 보기</a>` };
-            }
-        }
-    }
-
-    // 5. 일반 규칙
-    if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊 (평일 10:00~17:30)" };
-    if (normalized.includes("장바구니")) return isUserLoggedIn(memberId) ? { text: `${memberId}님의 장바구니로 이동합니다.<br><a href="/order/basket.html">🛒 바로가기</a>` } : { text: `로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    
-    // 6. 배송 조회 (로그인 체크 및 API 호출 포함)
+    // 5. 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
             try {
@@ -420,7 +406,7 @@ async function findAnswer(userInput, memberId) {
     return null;
 }
 
-// ========== [★누락되었던 함수 복구] 대화 로그 저장 함수 ==========
+// 대화 로그 저장
 async function saveConversationLog(mid, uMsg, bRes) {
     const client = new MongoClient(MONGODB_URI);
     try { 
@@ -430,8 +416,7 @@ async function saveConversationLog(mid, uMsg, bRes) {
             { $push: { conversation: { userMessage: uMsg, botResponse: bRes, createdAt: new Date() } } }, 
             { upsert: true }
         ); 
-    } catch(e) { console.error("로그 저장 실패:", e); } 
-    finally { await client.close(); }
+    } catch(e) { console.error(e); } finally { await client.close(); }
 }
 
 // ========== [메인 Chat] ==========
@@ -440,81 +425,49 @@ app.post("/chat", async (req, res) => {
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1단계: 규칙 & 금지어 확인
+    // 1. 규칙 및 추천 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
-       if (message !== "내 아이디") await saveConversationLog(memberId, message, ruleAnswer.text);
+       await saveConversationLog(memberId, message, ruleAnswer.text);
        return res.json(ruleAnswer);
     }
 
-    // 2단계: 통합 데이터 검색 (문턱 5점 - 아주 낮게 설정해서 일단 다 긁어모음)
+    // 2. 통합 데이터 검색 (5점 이상)
     const docs = findAllRelevantContent(message);
     
-    let gptAnswer = "";
-    
-    // ★ [철벽 방어] 그래도 검색된 게 하나도 없다? -> 진짜 없는 거임 -> API 호출 금지
-    if (docs.length === 0) {
-        gptAnswer = FALLBACK_MESSAGE_HTML;
-    } else {
-        // ★ [판단] GPT에게 "이 데이터들 중에 답이 있니?" 라고 물어봄
-        gptAnswer = await getGPT3TurboResponse(message, docs);
-        
-        // GPT가 "NO_CONTEXT" (답 없음) 이라고 판단하면 -> Fallback
-        if (gptAnswer.includes("NO_CONTEXT")) {
-            gptAnswer = FALLBACK_MESSAGE_HTML;
-        } else {
-            // 답이 있으면 이미지 복구 로직 실행
-            if (docs.length > 0) {
-                const bestDoc = docs[0]; // 가장 점수 높은 문서 기준
-                if (bestDoc.a.includes("<iframe") && !gptAnswer.includes("<iframe")) { const iframes = bestDoc.a.match(/<iframe.*<\/iframe>/g); if (iframes) gptAnswer += "\n" + iframes.join("\n"); }
-                if (bestDoc.a.includes("<img") && !gptAnswer.includes("<img")) { const imgs = bestDoc.a.match(/<img.*?>/g); if (imgs) gptAnswer += "\n" + imgs.join("\n"); }
-            }
-        }
-    }
+    // 3. GPT 답변 생성 (검색 결과 없으면 차단)
+    let gptAnswer = docs.length === 0 ? FALLBACK_MESSAGE_HTML : await getGPT3TurboResponse(message, docs);
+    if (gptAnswer.includes("NO_CONTEXT")) gptAnswer = FALLBACK_MESSAGE_HTML;
 
-    const finalAnswer = formatResponseText(gptAnswer);
-    await saveConversationLog(memberId, message, finalAnswer);
-    res.json({ text: finalAnswer, videoHtml: null });
+    await saveConversationLog(memberId, message, gptAnswer);
+    res.json({ text: gptAnswer });
 
   } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
 });
 
 // ========== [파일 및 데이터 관리 API] ==========
 
-// 1. PDF/텍스트 파일 업로드 및 분석
+// 1. PDF/텍스트 파일 업로드
 app.post("/chat_send", upload.single('file'), async (req, res) => {
     const { role, content } = req.body;
     const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect(); const db = client.db(DB_NAME);
-        
-        // PDF 파일 처리
         if (req.file) {
             req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
             if (req.file.mimetype === 'application/pdf') {
                 const dataBuffer = fs.readFileSync(req.file.path); 
                 const data = await pdfParse(dataBuffer);
                 const cleanText = data.text.replace(/\n\n+/g, '\n').replace(/\s+/g, ' ').trim();
-                
-                // 500자 단위 분할
                 const chunks = []; 
                 for (let i = 0; i < cleanText.length; i += 500) chunks.push(cleanText.substring(i, i + 500));
-                
-                const docs = chunks.map((chunk, index) => ({ 
-                    category: "pdf-knowledge", 
-                    question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, 
-                    answer: chunk, 
-                    createdAt: new Date() 
-                }));
-                
+                const docs = chunks.map((chunk, index) => ({ category: "pdf-knowledge", question: `[PDF 학습데이터] ${req.file.originalname} (Part ${index + 1})`, answer: chunk, createdAt: new Date() }));
                 if (docs.length > 0) await db.collection("postItNotes").insertMany(docs);
                 fs.unlink(req.file.path, () => {}); 
-                await updateSearchableData(); // 데이터 갱신
+                await updateSearchableData(); 
                 return res.json({ message: `PDF 분석 완료! 총 ${docs.length}개의 데이터로 학습되었습니다.` });
             }
         }
-        
-        // 롤(프롬프트) 설정
         if (role && content) {
             const fullPrompt = `역할: ${role}\n지시사항: ${content}`;
             await db.collection("systemPrompts").insertOne({ role, content: fullPrompt, createdAt: new Date() });
@@ -522,13 +475,10 @@ app.post("/chat_send", upload.single('file'), async (req, res) => {
             return res.json({ message: "LLM 역할 설정이 완료되었습니다." });
         }
         res.status(400).json({ error: "파일이나 내용이 없습니다." });
-    } catch (e) { 
-        if (req.file) fs.unlink(req.file.path, () => {}); 
-        res.status(500).json({ error: e.message }); 
-    } finally { await client.close(); }
+    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
-// 2. 이미지 지식 업로드 (FTP)
+// 2. 이미지 지식 업로드
 app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => {
     const { keyword } = req.body;
     const client = new MongoClient(MONGODB_URI);
@@ -536,35 +486,18 @@ app.post("/upload_knowledge_image", upload.single('image'), async (req, res) => 
     if (!req.file || !keyword) return res.status(400).json({ error: "필수 정보 누락" });
     
     req.file.originalname = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-    
     try {
         const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
         await ftpClient.access({ host: cleanFtpHost, user: YOGIBO_FTP_ID, password: YOGIBO_FTP_PW, secure: false });
         try { await ftpClient.ensureDir("web"); await ftpClient.ensureDir("chat"); } catch (dirErr) { await ftpClient.cd("/"); await ftpClient.ensureDir("www"); await ftpClient.ensureDir("chat"); }
-        
         const safeFilename = `${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
         await ftpClient.uploadFrom(req.file.path, safeFilename);
-        
         const remotePath = "web/chat"; const publicBase = FTP_PUBLIC_BASE || `http://${cleanFtpHost}`;
         const imageUrl = `${publicBase}/${remotePath}/${safeFilename}`.replace(/([^:]\/)\/+/g, '$1');
-        
-        await client.connect(); 
-        await client.db(DB_NAME).collection("postItNotes").insertOne({ 
-            category: "image-knowledge", 
-            question: keyword, 
-            answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`, 
-            createdAt: new Date() 
-        });
-        
-        fs.unlink(req.file.path, () => {}); 
-        ftpClient.close(); 
-        await updateSearchableData(); // 데이터 갱신
+        await client.connect(); await client.db(DB_NAME).collection("postItNotes").insertOne({ category: "image-knowledge", question: keyword, answer: `<img src="${imageUrl}" style="max-width:100%; border-radius:10px; margin-top:10px;">`, createdAt: new Date() });
+        fs.unlink(req.file.path, () => {}); ftpClient.close(); await updateSearchableData();
         res.json({ message: "이미지 지식 등록 완료" });
-    } catch (e) { 
-        if (req.file) fs.unlink(req.file.path, () => {}); 
-        ftpClient.close(); 
-        res.status(500).json({ error: e.message }); 
-    } finally { await client.close(); }
+    } catch (e) { if (req.file) fs.unlink(req.file.path, () => {}); ftpClient.close(); res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
 // 3. 게시글 수정
@@ -574,7 +507,6 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
     try {
         await client.connect(); const db = client.db(DB_NAME); let newAnswer = answer;
         if (file) {
-            // 이미지 수정 시 FTP 업로드 로직 동일
             file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
             const safeFilename = `${Date.now()}_edit.jpg`;
             const cleanFtpHost = YOGIBO_FTP.replace(/^(http:\/\/|https:\/\/|ftp:\/\/)/, '').replace(/\/$/, '');
@@ -587,8 +519,7 @@ app.put("/postIt/:id", upload.single('image'), async (req, res) => {
             fs.unlink(file.path, () => {}); ftpClient.close();
         }
         await db.collection("postItNotes").updateOne({ _id: new ObjectId(id) }, { $set: { question, answer: newAnswer, updatedAt: new Date() } });
-        await updateSearchableData(); 
-        res.json({ message: "수정 완료" });
+        await updateSearchableData(); res.json({ message: "수정 완료" });
     } catch (e) { if (file) fs.unlink(file.path, () => {}); ftpClient.close(); res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
@@ -597,7 +528,6 @@ app.delete("/postIt/:id", async(req, res) => {
     const { id } = req.params; const client = new MongoClient(MONGODB_URI); const ftpClient = new ftp.Client();
     try {
         await client.connect(); const db = client.db(DB_NAME);
-        // 이미지 파일이 있다면 FTP에서도 삭제 시도
         const targetPost = await db.collection("postItNotes").findOne({ _id: new ObjectId(id) });
         if (targetPost) {
             const imgMatch = targetPost.answer && targetPost.answer.match(/src="([^"]+)"/);
@@ -614,210 +544,28 @@ app.delete("/postIt/:id", async(req, res) => {
             }
         }
         await db.collection("postItNotes").deleteOne({ _id: new ObjectId(id) }); 
-        await updateSearchableData(); 
-        res.json({ message: "OK" });
+        await updateSearchableData(); res.json({ message: "OK" });
     } catch(e) { res.status(500).json({ error: e.message }); } finally { await client.close(); }
 });
 
-// 5. 게시글 조회 (페이징)
+// 5. 게시글 조회
 app.get("/postIt", async (req, res) => {
     const p = parseInt(req.query.page)||1; const l=300;
-    try { 
-        const c=new MongoClient(MONGODB_URI); await c.connect(); 
-        const f = req.query.category?{category:req.query.category}:{}; 
-        const n = await c.db(DB_NAME).collection("postItNotes").find(f).sort({_id:-1}).skip((p-1)*l).limit(l).toArray(); 
-        await c.close(); res.json({notes:n, currentPage:p}); 
-    } catch(e){res.status(500).json({error:e.message})}
+    try { const c=new MongoClient(MONGODB_URI); await c.connect(); const f = req.query.category?{category:req.query.category}:{}; const n = await c.db(DB_NAME).collection("postItNotes").find(f).sort({_id:-1}).skip((p-1)*l).limit(l).toArray(); await c.close(); res.json({notes:n, currentPage:p}); } catch(e){res.status(500).json({error:e.message})}
 });
 
 // 6. 게시글 등록
-app.post("/postIt", async(req,res)=>{ 
-    try{
-        const c=new MongoClient(MONGODB_URI);await c.connect(); 
-        await c.db(DB_NAME).collection("postItNotes").insertOne({...req.body,createdAt:new Date()}); 
-        await c.close(); await updateSearchableData(); 
-        res.json({message:"OK"})
-    }catch(e){res.status(500).json({error:e.message})} 
-});
+app.post("/postIt", async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect(); await c.db(DB_NAME).collection("postItNotes").insertOne({...req.body,createdAt:new Date()}); await c.close(); await updateSearchableData(); res.json({message:"OK"})}catch(e){res.status(500).json({error:e.message})} });
 
-// 7. 대화 로그 엑셀 다운로드
-app.get('/chatConnet', async(req,res)=>{ 
-    try{
-        const c=new MongoClient(MONGODB_URI);await c.connect();
-        const d=await c.db(DB_NAME).collection("conversationLogs").find({}).toArray();await c.close(); 
-        const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Log');
-        ws.columns=[{header:'ID',key:'m'},{header:'Date',key:'d'},{header:'Log',key:'c'}]; 
-        d.forEach(r=>ws.addRow({m:r.memberId||'Guest',d:r.date,c:JSON.stringify(r.conversation)})); 
-        res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        res.setHeader("Content-Disposition","attachment; filename=log.xlsx"); 
-        await wb.xlsx.write(res);res.end();
-    }catch(e){res.status(500).send("Err")} 
-});
+// 7. 엑셀 다운로드
+app.get('/chatConnet', async(req,res)=>{ try{const c=new MongoClient(MONGODB_URI);await c.connect();const d=await c.db(DB_NAME).collection("conversationLogs").find({}).toArray();await c.close(); const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Log');ws.columns=[{header:'ID',key:'m'},{header:'Date',key:'d'},{header:'Log',key:'c'}]; d.forEach(r=>ws.addRow({m:r.memberId||'Guest',d:r.date,c:JSON.stringify(r.conversation)})); res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");res.setHeader("Content-Disposition","attachment; filename=log.xlsx"); await wb.xlsx.write(res);res.end();}catch(e){res.status(500).send("Err")} });
 
-
-// ========== [상품 추천 시스템] ==========
-const yogiboProducts = require("./productData");
-
-// ★ 추천 의도 감지
-function isRecommendationRequest(msg) {
-  const recommendKeywords = [
-    "추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "고르", 
-    "어떤 제품", "뭘 사", "뭘 살", "어떤걸", "best", "베스트",
-    "입문", "처음", "초보", "시작"
-  ];
-  return recommendKeywords.some(k => msg.includes(k));
-}
-
-// ★ 사용자 조건 파싱
-function parseUserConditions(msg) {
-  const conditions = {
-    people: null,      // 인원
-    purpose: null,     // 용도
-    space: null,       // 공간
-    budget: null,      // 예산
-    keywords: []       // 기타 키워드
-  };
-
-  // 인원 파악
-  if (/혼자|1인|나혼자|솔로/.test(msg)) conditions.people = "1인";
-  else if (/둘이|2인|커플|연인/.test(msg)) conditions.people = "2인";
-  else if (/가족|아이|어린이|3인|4인/.test(msg)) conditions.people = "가족";
-
-  // 용도 파악
-  if (/TV|티비|영화|넷플/.test(msg)) conditions.purpose = "TV시청";
-  else if (/낮잠|잠|누워|눕/.test(msg)) conditions.purpose = "낮잠";
-  else if (/독서|책|읽/.test(msg)) conditions.purpose = "독서";
-  else if (/게임|플스|엑박/.test(msg)) conditions.purpose = "게임";
-  else if (/일|업무|재택/.test(msg)) conditions.purpose = "업무";
-
-  // 공간 파악
-  if (/원룸|오피스텔|작은/.test(msg)) conditions.space = "원룸";
-  else if (/거실|넓은|큰방/.test(msg)) conditions.space = "거실";
-
-  // 예산 파악
-  const priceMatch = msg.match(/(\d+)\s*만\s*원?/);
-  if (priceMatch) {
-    conditions.budget = parseInt(priceMatch[1]) * 10000;
-  }
-  if (/저렴|싼|가성비|부담없/.test(msg)) conditions.budget = 200000;
-  if (/고급|프리미엄|비싸도/.test(msg)) conditions.budget = 500000;
-
-  // 키워드 추출
-  const productKeywords = ["빈백", "소파", "쿠션", "필로우", "베개", "눕", "앉"];
-  productKeywords.forEach(k => {
-    if (msg.includes(k)) conditions.keywords.push(k);
-  });
-
-  return conditions;
-}
-
-// ★ AI 상품 추천 함수
-async function getProductRecommendation(userMessage, memberId) {
-  const conditions = parseUserConditions(userMessage);
-  
-  // 상품 점수 계산
-  const scoredProducts = yogiboProducts.map(product => {
-    let score = 0;
-    
-    // 인원 매칭
-    if (conditions.people === "1인" && product.features.some(f => f.includes("1인"))) score += 30;
-    if (conditions.people === "2인" && product.features.some(f => /2인|커플/.test(f))) score += 30;
-    if (conditions.people === "가족" && product.features.some(f => /가족|어린이/.test(f))) score += 30;
-    
-    // 용도 매칭
-    if (conditions.purpose && product.useCase.includes(conditions.purpose)) score += 25;
-    
-    // 공간 매칭
-    if (conditions.space === "원룸" && product.space.some(s => /원룸|작은/.test(s))) score += 20;
-    if (conditions.space === "거실" && product.space.some(s => /거실|넓은/.test(s))) score += 20;
-    
-    // 예산 매칭
-    if (conditions.budget) {
-      if (product.price <= conditions.budget) score += 20;
-      if (product.price <= conditions.budget * 0.7) score += 10; // 여유 있으면 보너스
-    }
-    
-    // 인기 제품 가산점
-    if (product.features.includes("베스트셀러")) score += 10;
-    
-    return { ...product, score };
-  });
-
-  // 상위 3개 추천
-  const topProducts = scoredProducts
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-
-  // GPT에게 추천 문구 생성 요청
-  const recommendPrompt = `
-당신은 요기보 전문 상담원입니다. 
-고객 조건: ${JSON.stringify(conditions)}
-추천 상품 TOP 3: ${JSON.stringify(topProducts.map(p => ({ name: p.name, price: p.price, features: p.features, description: p.description })))}
-
-위 정보를 바탕으로 친절하게 상품을 추천해주세요.
-- 1순위 추천 상품과 이유를 먼저 설명
-- 대안 상품 2개도 간단히 소개
-- 가격은 "XX만원" 형식으로
-- 마지막에 "더 자세한 상담이 필요하시면 말씀해주세요!" 추가
-`;
-
-  try {
-    const res = await axios.post(OPEN_URL, {
-      model: FINETUNED_MODEL,
-      messages: [
-        { role: "system", content: recommendPrompt },
-        { role: "user", content: userMessage }
-      ],
-      temperature: 0.7
-    }, { headers: { Authorization: `Bearer ${API_KEY}` } });
-
-    let answer = res.data.choices[0].message.content;
-    
-    // 상품 링크 버튼 추가
-    const productButtons = topProducts.map(p => 
-      `<a href="${p.productUrl}" target="_blank" class="product-btn">${p.name} 보러가기 →</a>`
-    ).join("");
-    
-    answer += `<div class="product-links" style="margin-top:15px;">${productButtons}</div>`;
-    
-    return { text: answer, isRecommendation: true };
-    
-  } catch (e) {
-    console.error("추천 오류:", e);
-    return { text: "추천 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요." };
-  }
-}
-
-// ========== [메인 Chat 수정] ==========
-app.post("/chat", async (req, res) => {
-  const { message, memberId } = req.body;
-  if (!message) return res.status(400).json({ error: "No message" });
-
-  try {
-    // ★ 0단계: 상품 추천 요청 감지
-    if (isRecommendationRequest(message)) {
-      const recommendation = await getProductRecommendation(message, memberId);
-      await saveConversationLog(memberId, message, recommendation.text);
-      return res.json(recommendation);
-    }
-
-    // 1단계: 규칙 & 금지어 확인 (기존 코드)
-    const ruleAnswer = await findAnswer(message, memberId);
-    // ... 나머지 기존 코드 ...
-    
-  } catch (e) { 
-    console.error(e); 
-    res.status(500).json({ text: "오류가 발생했습니다." }); 
-  }
-});
-
-
-// 서버 시작
+// 서버 실행
 (async function initialize() {
   try { 
       console.log("🟡 서버 시작..."); 
       await getTokensFromDB(); 
-      await updateSearchableData(); // 여기서 모든 데이터 통합 로드
+      await updateSearchableData(); 
       app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`)); 
   } catch (err) { console.error("❌ 초기화 오류:", err.message); process.exit(1); }
 })();
