@@ -309,7 +309,7 @@ async function findAnswer(userInput, memberId) {
 
     // 3. 충전 = 비즈 리필
     if (normalized.includes("충전")) {
-        return { text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br>요기보는 전자기기가 아닙니다! <b>'충전'</b>은 푹 꺼진 소파에 <b>'비즈(충전재)'</b>를 채워넣는 것을 의미해요.<br><a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` };
+        return { text: `비즈 충전을 찾으시는걸까요? 해당 링크를 통해 자세한 내용을 확인하실수 있습니다.<br><a href="https://yogibo.kr/event/yogibo/biz_cover.html target="_blank">[비즈 충전방법]</a>` };
     }
 
     // 4. 상품 검색 링크 생성
