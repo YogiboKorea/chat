@@ -654,6 +654,164 @@ app.get('/chatConnet', async(req,res)=>{
     }catch(e){res.status(500).send("Err")} 
 });
 
+
+// ========== [상품 추천 시스템] ==========
+const yogiboProducts = require("./productData");
+
+// ★ 추천 의도 감지
+function isRecommendationRequest(msg) {
+  const recommendKeywords = [
+    "추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "고르", 
+    "어떤 제품", "뭘 사", "뭘 살", "어떤걸", "best", "베스트",
+    "입문", "처음", "초보", "시작"
+  ];
+  return recommendKeywords.some(k => msg.includes(k));
+}
+
+// ★ 사용자 조건 파싱
+function parseUserConditions(msg) {
+  const conditions = {
+    people: null,      // 인원
+    purpose: null,     // 용도
+    space: null,       // 공간
+    budget: null,      // 예산
+    keywords: []       // 기타 키워드
+  };
+
+  // 인원 파악
+  if (/혼자|1인|나혼자|솔로/.test(msg)) conditions.people = "1인";
+  else if (/둘이|2인|커플|연인/.test(msg)) conditions.people = "2인";
+  else if (/가족|아이|어린이|3인|4인/.test(msg)) conditions.people = "가족";
+
+  // 용도 파악
+  if (/TV|티비|영화|넷플/.test(msg)) conditions.purpose = "TV시청";
+  else if (/낮잠|잠|누워|눕/.test(msg)) conditions.purpose = "낮잠";
+  else if (/독서|책|읽/.test(msg)) conditions.purpose = "독서";
+  else if (/게임|플스|엑박/.test(msg)) conditions.purpose = "게임";
+  else if (/일|업무|재택/.test(msg)) conditions.purpose = "업무";
+
+  // 공간 파악
+  if (/원룸|오피스텔|작은/.test(msg)) conditions.space = "원룸";
+  else if (/거실|넓은|큰방/.test(msg)) conditions.space = "거실";
+
+  // 예산 파악
+  const priceMatch = msg.match(/(\d+)\s*만\s*원?/);
+  if (priceMatch) {
+    conditions.budget = parseInt(priceMatch[1]) * 10000;
+  }
+  if (/저렴|싼|가성비|부담없/.test(msg)) conditions.budget = 200000;
+  if (/고급|프리미엄|비싸도/.test(msg)) conditions.budget = 500000;
+
+  // 키워드 추출
+  const productKeywords = ["빈백", "소파", "쿠션", "필로우", "베개", "눕", "앉"];
+  productKeywords.forEach(k => {
+    if (msg.includes(k)) conditions.keywords.push(k);
+  });
+
+  return conditions;
+}
+
+// ★ AI 상품 추천 함수
+async function getProductRecommendation(userMessage, memberId) {
+  const conditions = parseUserConditions(userMessage);
+  
+  // 상품 점수 계산
+  const scoredProducts = yogiboProducts.map(product => {
+    let score = 0;
+    
+    // 인원 매칭
+    if (conditions.people === "1인" && product.features.some(f => f.includes("1인"))) score += 30;
+    if (conditions.people === "2인" && product.features.some(f => /2인|커플/.test(f))) score += 30;
+    if (conditions.people === "가족" && product.features.some(f => /가족|어린이/.test(f))) score += 30;
+    
+    // 용도 매칭
+    if (conditions.purpose && product.useCase.includes(conditions.purpose)) score += 25;
+    
+    // 공간 매칭
+    if (conditions.space === "원룸" && product.space.some(s => /원룸|작은/.test(s))) score += 20;
+    if (conditions.space === "거실" && product.space.some(s => /거실|넓은/.test(s))) score += 20;
+    
+    // 예산 매칭
+    if (conditions.budget) {
+      if (product.price <= conditions.budget) score += 20;
+      if (product.price <= conditions.budget * 0.7) score += 10; // 여유 있으면 보너스
+    }
+    
+    // 인기 제품 가산점
+    if (product.features.includes("베스트셀러")) score += 10;
+    
+    return { ...product, score };
+  });
+
+  // 상위 3개 추천
+  const topProducts = scoredProducts
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  // GPT에게 추천 문구 생성 요청
+  const recommendPrompt = `
+당신은 요기보 전문 상담원입니다. 
+고객 조건: ${JSON.stringify(conditions)}
+추천 상품 TOP 3: ${JSON.stringify(topProducts.map(p => ({ name: p.name, price: p.price, features: p.features, description: p.description })))}
+
+위 정보를 바탕으로 친절하게 상품을 추천해주세요.
+- 1순위 추천 상품과 이유를 먼저 설명
+- 대안 상품 2개도 간단히 소개
+- 가격은 "XX만원" 형식으로
+- 마지막에 "더 자세한 상담이 필요하시면 말씀해주세요!" 추가
+`;
+
+  try {
+    const res = await axios.post(OPEN_URL, {
+      model: FINETUNED_MODEL,
+      messages: [
+        { role: "system", content: recommendPrompt },
+        { role: "user", content: userMessage }
+      ],
+      temperature: 0.7
+    }, { headers: { Authorization: `Bearer ${API_KEY}` } });
+
+    let answer = res.data.choices[0].message.content;
+    
+    // 상품 링크 버튼 추가
+    const productButtons = topProducts.map(p => 
+      `<a href="${p.productUrl}" target="_blank" class="product-btn">${p.name} 보러가기 →</a>`
+    ).join("");
+    
+    answer += `<div class="product-links" style="margin-top:15px;">${productButtons}</div>`;
+    
+    return { text: answer, isRecommendation: true };
+    
+  } catch (e) {
+    console.error("추천 오류:", e);
+    return { text: "추천 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요." };
+  }
+}
+
+// ========== [메인 Chat 수정] ==========
+app.post("/chat", async (req, res) => {
+  const { message, memberId } = req.body;
+  if (!message) return res.status(400).json({ error: "No message" });
+
+  try {
+    // ★ 0단계: 상품 추천 요청 감지
+    if (isRecommendationRequest(message)) {
+      const recommendation = await getProductRecommendation(message, memberId);
+      await saveConversationLog(memberId, message, recommendation.text);
+      return res.json(recommendation);
+    }
+
+    // 1단계: 규칙 & 금지어 확인 (기존 코드)
+    const ruleAnswer = await findAnswer(message, memberId);
+    // ... 나머지 기존 코드 ...
+    
+  } catch (e) { 
+    console.error(e); 
+    res.status(500).json({ text: "오류가 발생했습니다." }); 
+  }
+});
+
+
 // 서버 시작
 (async function initialize() {
   try { 

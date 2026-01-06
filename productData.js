@@ -1,0 +1,147 @@
+// productData.js - 상품 추천용 데이터
+const yogiboProducts = [
+    {
+      id: "max",
+      name: "요기보 맥스",
+      category: "소파",
+      size: "W70 x D45 x H170cm",
+      price: 298000,
+      features: ["1~2인용", "다용도", "베스트셀러", "눕기 가능"],
+      useCase: ["TV시청", "낮잠", "휴식", "독서"],
+      space: ["거실", "넓은방"],
+      keywords: ["대형", "인기", "눕기", "2인"],
+      description: "요기보의 시그니처 제품. 앉고, 눕고, 기대는 모든 자세가 가능한 만능 빈백",
+      imageUrl: "https://yogibo.kr/web/img/product/...",
+      productUrl: "https://yogibo.kr/product/detail.html?product_no=123"
+    },
+    {
+      id: "midi",
+      name: "요기보 미디",
+      category: "소파",
+      size: "W65 x D45 x H120cm",
+      price: 228000,
+      features: ["1인용", "컴팩트", "원룸추천"],
+      useCase: ["TV시청", "휴식", "독서", "게임"],
+      space: ["원룸", "작은방", "서재"],
+      keywords: ["중형", "1인", "원룸", "가성비"],
+      description: "맥스의 편안함을 작은 공간에서도. 원룸 거주자에게 추천",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "pod",
+      name: "요기보 팟",
+      category: "소파",
+      size: "W85 x D85 x H95cm",
+      price: 248000,
+      features: ["1인용", "포근함", "감싸는느낌"],
+      useCase: ["독서", "명상", "휴식"],
+      space: ["거실코너", "서재", "침실"],
+      keywords: ["동그란", "포근", "아늑", "감싸는"],
+      description: "몸을 감싸안는 포근한 디자인. 나만의 아늑한 공간을 만들어줍니다",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "double",
+      name: "요기보 더블",
+      category: "소파",
+      size: "W140 x D45 x H170cm",
+      price: 398000,
+      features: ["2~3인용", "대형", "가족용", "커플추천"],
+      useCase: ["TV시청", "낮잠", "가족휴식"],
+      space: ["넓은거실", "패밀리룸"],
+      keywords: ["대형", "2인", "커플", "가족", "함께"],
+      description: "둘이 함께 누워도 넉넉한 사이즈. 커플과 가족에게 추천",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "lounger",
+      name: "요기보 라운저",
+      category: "소파",
+      size: "W65 x D80 x H60cm",
+      price: 178000,
+      features: ["1인용", "좌식", "등받이"],
+      useCase: ["TV시청", "게임", "좌식생활"],
+      space: ["원룸", "작은방", "거실"],
+      keywords: ["좌식", "등받이", "낮은", "바닥생활"],
+      description: "좌식 생활에 최적화된 등받이형 빈백",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "mini",
+      name: "요기보 미니",
+      category: "소파",
+      size: "W70 x D45 x H90cm",
+      price: 168000,
+      features: ["1인용", "소형", "입문용", "가성비"],
+      useCase: ["휴식", "독서", "보조의자"],
+      space: ["원룸", "작은방", "어디서나"],
+      keywords: ["소형", "저렴", "입문", "첫구매"],
+      description: "요기보 입문자에게 추천. 가성비 좋은 1인용 빈백",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "pyramid",
+      name: "요기보 피라미드",
+      category: "소파",
+      size: "W75 x D75 x H65cm",
+      price: 138000,
+      features: ["1인용", "어린이추천", "가벼움"],
+      useCase: ["어린이", "독서", "보조의자"],
+      space: ["아이방", "거실", "어디서나"],
+      keywords: ["아이", "어린이", "가벼운", "삼각형"],
+      description: "가볍고 이동이 쉬운 삼각형 빈백. 아이들이 좋아해요",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "drop",
+      name: "요기보 드롭",
+      category: "소파",
+      size: "W85 x D85 x H75cm",
+      price: 198000,
+      features: ["1인용", "물방울형", "인테리어"],
+      useCase: ["휴식", "인테리어", "액센트"],
+      space: ["거실", "카페", "사무실"],
+      keywords: ["물방울", "예쁜", "인테리어", "디자인"],
+      description: "물방울 모양의 세련된 디자인. 인테리어 포인트로 좋아요",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    // 서포트/롤 제품들
+    {
+      id: "support",
+      name: "요기보 서포트",
+      category: "서포트",
+      size: "W70 x D30 x H40cm",
+      price: 98000,
+      features: ["팔걸이", "등받이", "소파와함께"],
+      useCase: ["팔걸이", "등받이", "목베개"],
+      space: ["소파옆"],
+      keywords: ["팔걸이", "쿠션", "서포트", "보조"],
+      description: "소파와 함께 사용하면 더 편안한 팔걸이/등받이",
+      imageUrl: "...",
+      productUrl: "..."
+    },
+    {
+      id: "roll-max",
+      name: "요기보 롤 맥스",
+      category: "바디필로우",
+      size: "W25 x L165cm",
+      price: 128000,
+      features: ["바디필로우", "수면용", "긴베개"],
+      useCase: ["수면", "임산부", "바디필로우"],
+      space: ["침실", "침대"],
+      keywords: ["베개", "바디필로우", "수면", "긴베개", "임산부"],
+      description: "숙면을 위한 롱 바디필로우. 임산부에게도 추천",
+      imageUrl: "...",
+      productUrl: "..."
+    }
+  ];
+  
+  module.exports = yogiboProducts;
+  
