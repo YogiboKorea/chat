@@ -75,7 +75,21 @@ const COUNSELOR_LINKS_HTML = `
      <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
   </a>
 </div>
-`;
+`
+
+
+// ========== HTML 템플릿 ==========
+const COUNSELOR_LINKS_HTML_CALL = `
+<div class="consult-container" style="">
+  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao" style="cursor:pointer">>
+     <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
+  </a>
+  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" class="consult-btn naver" style="cursor:pointer">>
+     <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
+  </a>
+</div>
+`
+;
 
 const FALLBACK_MESSAGE_HTML = `<div style="margin-top: 10px;">${COUNSELOR_LINKS_HTML}</div>`;
 const LOGIN_BTN_HTML = `<div style="margin-top:15px;"><a href="/member/login.html" class="consult-btn" style="background:#58b5ca; color:#fff; justify-content:center;">로그인 하러 가기 →</a></div>`;
@@ -358,7 +372,7 @@ async function findAnswer(userInput, memberId) {
 
     // 2. 상담사 연결
     if (normalized.includes("상담사") || normalized.includes("상담원") || normalized.includes("사람")|| normalized.includes("상담사 연결")|| normalized.includes("고객센터 연결")|| normalized.includes("고객센터 연결 해줘")) {
-        return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML}` };
+        return { text: `전문 상담사와 연결해 드리겠습니다.${COUNSELOR_LINKS_HTML_CALL}` };
     }
 
     // 3. 충전 = 비즈 리필
