@@ -146,6 +146,15 @@ async function updateSearchableData() {
         });
     }
 
+        // ★ 중복 제거 (질문 기준)
+    const seen = new Set();
+    allSearchableData = [...faqData, ...dbData, ...jsonData].filter(item => {
+        const key = item.q.toLowerCase().replace(/\s+/g, "");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
     // 4. 모든 데이터 합치기
     allSearchableData = [...faqData, ...dbData, ...jsonData];
     
@@ -157,42 +166,76 @@ async function updateSearchableData() {
 
   } catch (err) { console.error("데이터 갱신 실패:", err); } finally { await client.close(); }
 }
-
-// ★ [핵심] 정밀 검색 로직 (Broad Search)
+// ★ [개선된 검색 로직]
 function findAllRelevantContent(msg) {
-  const kws = msg.split(/\s+/).filter(w => w.length > 1); // 2글자 이상 키워드
-  if (!kws.length && msg.length < 2) return [];
-
-  const scored = allSearchableData.map(item => {
-    let score = 0;
-    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
-    const a = (item.a || "").toLowerCase();
-    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+    const kws = msg.split(/\s+/).filter(w => w.length > 1);
+    const cleanMsg = msg.toLowerCase().replace(/\s+/g, "").replace(/[?!！？.]/g, "");
     
-    // 1. 질문 완전 일치 (100점)
-    if (q === cleanMsg) score += 100;
-    // 2. 포함 관계 (50점)
-    else if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 50;
+    // 1. 의도 분류 (카테고리 힌트)
+    const intentMap = {
+      size: ["사이즈", "크기", "규격", "치수"],
+      covering: ["커버링", "씌우", "교체방법"],
+      laundry: ["세탁", "빨래", "건조"],
+      delivery: ["배송", "배달", "수령"],
+      refund: ["환불", "반품", "교환"],
+      service: ["AS", "수리", "고장", "불량"]
+    };
     
-    // 3. 키워드 매칭 (질문: 20점, 답변: 5점)
-    kws.forEach(w => {
-      const cleanW = w.toLowerCase();
-      if (item.q.toLowerCase().includes(cleanW)) score += 20;
-      if (item.a.toLowerCase().includes(cleanW)) score += 5;
+    let detectedIntent = null;
+    for (const [intent, keywords] of Object.entries(intentMap)) {
+      if (keywords.some(k => cleanMsg.includes(k))) {
+        detectedIntent = intent;
+        break;
+      }
+    }
+  
+    const scored = allSearchableData.map(item => {
+      let score = 0;
+      const q = (item.q || "").toLowerCase().replace(/\s+/g, "").replace(/[?!！？.]/g, "");
+      const a = (item.a || "").toLowerCase();
+      const category = item.category || "";
+      
+      // ★ 카테고리 일치 보너스 (30점)
+      if (detectedIntent && category.includes(detectedIntent)) {
+        score += 30;
+      }
+      
+      // ★ 질문 완전 일치 (100점)
+      if (q === cleanMsg) score += 100;
+      
+      // ★ 핵심 키워드 조합 매칭 (50점)
+      // 예: "맥스" + "사이즈" 둘 다 있어야 높은 점수
+      const matchedKws = kws.filter(w => q.includes(w.toLowerCase()));
+      if (matchedKws.length >= 2) {
+        score += 50;
+      } else if (matchedKws.length === 1 && kws.length === 1) {
+        score += 30; // 단일 키워드지만 전체 일치
+      }
+      
+      // ★ 부분 포함 (기존보다 낮은 점수)
+      kws.forEach(w => {
+        const cleanW = w.toLowerCase();
+        if (q.includes(cleanW)) score += 10; // 20 → 10으로 낮춤
+        // 답변 매칭은 제외 (노이즈 원인)
+      });
+  
+      return { ...item, score };
     });
-
-    return { ...item, score };
-  });
-
-  // ★ 문턱을 5점으로 대폭 낮춤 (단어 하나라도 맞으면 일단 가져옴)
-  // 상위 5개까지 넉넉하게 가져옴
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 5);
-}
+  
+    // ★ 임계값 상향 (5 → 25점)
+    // ★ 상위 3개로 제한 (5 → 3개)
+    return scored
+      .filter(i => i.score >= 25)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }
+  
 
 // GPT 호출
 async function getGPT3TurboResponse(input, context = []) {
   if (context.length === 0) return "NO_CONTEXT"; 
 
+  
   // 컨텍스트를 보기 좋게 정리해서 프롬프트에 넣음
   const contextText = context.map((i, idx) => `[정보 ${idx+1}] (출처: ${i.source})\nQ: ${i.q}\nA: ${i.a}`).join("\n\n");
   const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
