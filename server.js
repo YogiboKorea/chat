@@ -376,7 +376,7 @@ async function findAnswer(userInput, memberId) {
     }
 
     // 3. 충전 = 비즈 리필
-    if (normalized.includes("충전")) {
+    if (normalized.includes("충전")|| normalized.includes("리필 비즈")|| normalized.includes("리필")) {
         return { text: `비즈 충전을 찾으시는걸까요? 해당 링크를 통해 자세한 내용을 확인하실수 있습니다.<br><a href="https://yogibo.kr/event/yogibo/biz_cover.html" target="_blank">[비즈 충전방법]</a>` };
     }
 
