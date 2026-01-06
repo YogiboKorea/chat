@@ -231,28 +231,82 @@ function findAllRelevantContent(msg) {
   }
   
 
-// GPT 호출
+// ★ [2단계 검증 시스템]
 async function getGPT3TurboResponse(input, context = []) {
-  if (context.length === 0) return "NO_CONTEXT"; 
-
+    if (context.length === 0) return "NO_CONTEXT";
   
-  // 컨텍스트를 보기 좋게 정리해서 프롬프트에 넣음
-  const contextText = context.map((i, idx) => `[정보 ${idx+1}] (출처: ${i.source})\nQ: ${i.q}\nA: ${i.a}`).join("\n\n");
-  const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
-
-  try {
-    const res = await axios.post(OPEN_URL, {
-      model: FINETUNED_MODEL, 
-      messages: [
-          { role: "system", content: sys }, 
+    // ────────────────────────────────────────
+    // 1단계: GPT에게 "관련 있는 데이터 번호"만 물어봄
+    // ────────────────────────────────────────
+    const candidateList = context.map((item, idx) => 
+      `${idx + 1}. ${item.q}`
+    ).join("\n");
+  
+    const filterPrompt = `사용자 질문: "${input}"
+  
+  아래 후보 중 이 질문에 답변하는 데 **직접적으로 관련 있는 번호**만 골라주세요.
+  관련 없으면 "없음"이라고 답하세요.
+  
+  [후보 목록]
+  ${candidateList}
+  
+  답변 형식: 숫자만 (예: 1 또는 1,3)`;
+  
+    try {
+      // 가벼운 필터링용 호출 (토큰 적게 사용)
+      const filterRes = await axios.post(OPEN_URL, {
+        model: "gpt-3.5-turbo",  // 저렴한 모델로 필터링
+        messages: [{ role: "user", content: filterPrompt }],
+        temperature: 0,
+        max_tokens: 20  // 숫자만 받으면 되니까 짧게
+      }, { headers: { Authorization: `Bearer ${API_KEY}` } });
+  
+      const filterAnswer = filterRes.data.choices[0].message.content.trim();
+      
+      // "없음"이면 바로 NO_CONTEXT
+      if (filterAnswer === "없음" || filterAnswer.toLowerCase() === "none") {
+        return "NO_CONTEXT";
+      }
+  
+      // ────────────────────────────────────────
+      // 2단계: 선택된 데이터만 가지고 최종 답변 생성
+      // ────────────────────────────────────────
+      const selectedIndexes = filterAnswer.match(/\d+/g)?.map(n => parseInt(n) - 1) || [];
+      const filteredContext = selectedIndexes
+        .filter(i => i >= 0 && i < context.length)
+        .map(i => context[i]);
+  
+      // 필터링 후 남은 게 없으면
+      if (filteredContext.length === 0) {
+        return "NO_CONTEXT";
+      }
+  
+      // 검증된 데이터만으로 답변 생성
+      const contextText = filteredContext
+        .map((item, idx) => `[정보 ${idx + 1}]\nQ: ${item.q}\nA: ${item.a}`)
+        .join("\n\n");
+  
+      const finalPrompt = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
+  
+      const res = await axios.post(OPEN_URL, {
+        model: FINETUNED_MODEL,
+        messages: [
+          { role: "system", content: finalPrompt },
           { role: "user", content: input }
-      ], 
-      temperature: 0 // 사실 기반 답변을 위해 0으로 설정
-    }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
-    
-    return res.data.choices[0].message.content;
-  } catch (e) { return "오류가 발생했습니다."; }
-}
+        ],
+        temperature: 0
+      }, { headers: { Authorization: `Bearer ${API_KEY}` } });
+  
+      return res.data.choices[0].message.content;
+  
+    } catch (e) {
+      console.error("GPT 호출 오류:", e.message);
+      return "오류가 발생했습니다.";
+    }
+  }
+  
+
+
 
 // 유틸 함수들
 function formatResponseText(text) { return text || ""; }
