@@ -70,37 +70,38 @@ const runDb = async (callback) => {
 let pendingCoveringContext = false;
 let allSearchableData = [...staticFaqList];
 
-// ========== [챗봇 상수: 디자인 수정됨 ✨] ==========
-const COUNSELOR_LINKS_HTML = `
-<div class="consult-container" style="margin-top:10px;">
-  <p style="font-weight:bold; margin-bottom:5px; font-size:14px; color:#e74c3c;">
-    <i class="fa-solid fa-triangle-exclamation"></i> 정확한 정보 확인이 필요합니다.
-  </p>
-  <p style="font-size:13px; color:#555; margin-bottom:12px; line-height:1.4;">
-    상담사 확인이 필요한 내용일 수 있으니, 아래 버튼을 눌러 <b>상담사</b>에게 문의해주세요.
-  </p>
-  <div style="display:flex; flex-direction:column; gap:8px;">
-    <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" 
-       style="display:block; background:#FEE500; color:#3c1e1e; padding:10px; border-radius:5px; text-decoration:none; font-weight:bold; font-size:13px; text-align:center;">
-       💬 카카오톡 상담원으로 연결
-    </a>
-    <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" 
-       style="display:block; background:#03C75A; color:#fff; padding:10px; border-radius:5px; text-decoration:none; font-weight:bold; font-size:13px; text-align:center;">
-       💬 네이버 톡톡 상담원으로 연결
-    </a>
-  </div>
+// ========== [★ 핵심 수정: 상담사 버튼 HTML 분리] ==========
+
+// 1. 순수 버튼 HTML (직접 "상담사 연결" 요청 시 사용)
+const COUNSELOR_BUTTONS_HTML = `
+<div style="display:flex; flex-direction:column; gap:8px; margin-top:5px;">
+  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" 
+     style="display:block; background:#FEE500; color:#3c1e1e; padding:12px 10px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:14px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,0.1);">
+     💬 카카오톡 상담원으로 연결
+  </a>
+  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" 
+     style="display:block; background:#03C75A; color:#fff; padding:12px 10px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:14px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,0.1);">
+     💬 네이버 톡톡 상담원으로 연결
+  </a>
 </div>
 `;
 
-// ✅ [수정] <br> 태그 제거하고 div 스타일로 간격 조정
+// 2. 답변 실패 시 안내 문구 포함 HTML (기존 상세 멘트 유지)
 const FALLBACK_MESSAGE_HTML = `
-<div style="margin-top:20px; padding-top:15px; border-top:1px dashed #ddd;">
-  <strong style="display:block; margin-bottom:5px; color:#333;">상담사를 연결해 드릴까요?</strong>
-  ${COUNSELOR_LINKS_HTML}
+<div style="margin-top:20px; border-top:1px dashed #eee; padding-top:15px;">
+  <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
+    ⚠️ 정확한 정보 확인이 필요합니다.
+  </p>
+  <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
+    죄송합니다. 현재 데이터베이스에서 정확한 답변을 찾지 못했습니다.<br>
+    사람의 확인이 필요한 내용일 수 있으니, 아래 버튼을 눌러 <b>상담사</b>에게 문의해주세요.
+  </p>
+  ${COUNSELOR_BUTTONS_HTML}
 </div>
 `;
 
 const LOGIN_BTN_HTML = `<div style="margin-top:15px;"><a href="/member/login.html" style="display: inline-block; padding: 10px 20px; background-color: #58b5ca; color: #ffffff; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">로그인 페이지 이동하기 →</a></div>`;
+
 
 // ========== [챗봇 시스템 프롬프트] ==========
 const YOGIBO_SYSTEM_PROMPT = `
@@ -226,13 +227,15 @@ async function getShipmentDetail(orderId) {
   return null;
 }
 
-// ========== [챗봇 findAnswer] ==========
+// ========== [챗봇 findAnswer (상담사 연결 구분)] ==========
 async function findAnswer(userInput, memberId) {
   const normalized = normalizeSentence(userInput);
-  // 1. 상담사 연결 (간격 수정된 HTML 반환)
+  
+  // 1. ★ [수정됨] 상담사 연결 (멘트 없이 버튼만)
   if (normalized.includes("상담사 연결") || normalized.includes("상담원 연결")) {
-    return { text: `상담사와 연결을 도와드리겠습니다.${COUNSELOR_LINKS_HTML}` };
+    return { text: COUNSELOR_BUTTONS_HTML };
   }
+
   if (normalized.includes("고객센터") && (normalized.includes("번호") || normalized.includes("전화"))) return { text: "요기보 고객센터 전화번호는 **02-557-0920** 입니다. 😊<br>운영시간: 평일 10:00 ~ 17:30 (점심시간 12:00~13:00)" };
   if (normalized.includes("오프라인 매장") || normalized.includes("매장안내")) return { text: `가까운 매장을 안내해 드립니다.<br><a href="/why/store.html" target="_blank" style="color:#58b5ca; font-weight:bold; text-decoration:underline;">매장안내 바로가기</a>` };
   if (normalized.includes("내 아이디") || normalized.includes("아이디 조회")) return isUserLoggedIn(memberId) ? { text: `안녕하세요 ${memberId} 고객님, 무엇을 도와드릴까요?` } : { text: `로그인이 필요한 서비스입니다.<br>아래 버튼을 눌러 로그인해주세요.${LOGIN_BTN_HTML}` };
@@ -331,7 +334,10 @@ app.post("/chat", async (req, res) => {
     const docs = findRelevantContent(message);
     let gptAnswer = await getGPT3TurboResponse(message, docs);
     gptAnswer = formatResponseText(gptAnswer);
+    
+    // ✅ [수정] Fallback 시에는 상세 문구 포함 HTML 사용
     if (docs.length === 0) gptAnswer += FALLBACK_MESSAGE_HTML;
+    
     await saveConversationLog(memberId, message, gptAnswer);
     res.json({ text: gptAnswer });
   } catch (e) { res.status(500).json({ text: "오류 발생" }); }
@@ -388,6 +394,7 @@ app.post('/api/:_any/uploads/image', upload.single('file'), async (req, res) => 
   const client = new ftp.Client(15000); client.ftp.verbose = false;
   try {
     await client.access({ host: FTP_HOST, user: FTP_USER, password: FTP_PASS, secure: false });
+    const ymd = dayjs().format('YYYY/MM/DD');
     const relSuffix = `${MALL_ID}/${dayjs().format('YYYY/MM/DD')}`;
     const baseCandidates = ['web/img/temple/uploads', 'img/temple/uploads', 'temple/uploads'];
     for (const base of baseCandidates) {
@@ -644,10 +651,9 @@ app.get('/api/:_any/analytics/:pageId/clicks-by-date', async (req, res) => {
 app.get('/api/:_any/analytics/:pageId/devices-by-date', async (req, res) => {
   const { pageId } = req.params; const { start_date, end_date, url } = req.query;
   const match = { pageId, dateKey: { $gte: start_date.slice(0,10), $lte: end_date.slice(0,10) } };
-  if(url) match.pageUrl = url;
   await runDb(async (db) => {
     const data = await db.collection(`visits_${MALL_ID}`).aggregate([
-      { $match: match }, { $group: { _id: { date:'$dateKey', device:'$device' }, count: { $sum:1 } } }, { $project: { _id:0, date:'$_id.date', device:'$_id.device', count:1 } }, { $sort: { date:1 } }
+      { $match: match }, { $group: { _id: { date: '$dateKey', device: '$device' }, count: { $sum: 1 } } }, { $sort: { '_id.date': 1 } }
     ]).toArray();
     res.json(data.map(d => ({ date: d._id.date, device: d._id.device, count: d.count })));
   });
