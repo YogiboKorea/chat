@@ -92,10 +92,6 @@ const FALLBACK_MESSAGE_HTML = `
   <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
     ⚠️ 정확한 정보 확인이 필요합니다.
   </p>
-  <p style="font-size:13px; color:#555; margin-bottom:15px; line-height:1.4;">
-    죄송합니다. 현재 데이터베이스에서 정확한 답변을 찾지 못했습니다.<br>
-    사람의 확인이 필요한 내용일 수 있으니, 아래 버튼을 눌러 <b>상담사</b>에게 문의해주세요.
-  </p>
   ${COUNSELOR_BUTTONS_HTML}
 </div>
 `;
