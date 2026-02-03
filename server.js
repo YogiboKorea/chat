@@ -19,7 +19,7 @@ const staticFaqList = require("./faq");
 const {
   ACCESS_TOKEN, REFRESH_TOKEN, CAFE24_CLIENT_ID, CAFE24_CLIENT_SECRET,
   DB_NAME, MONGODB_URI, CAFE24_MALLID, OPEN_URL, API_KEY,
-  FINETUNED_MODEL = "gpt-3.5-turbo", CAFE24_API_VERSION = "2024-06-01",
+  FINETUNED_MODEL = "gpt-4o-mini", CAFE24_API_VERSION = "2025-12-01",
   PORT = 5000, FTP_PUBLIC_BASE, YOGIBO_FTP, YOGIBO_FTP_ID, YOGIBO_FTP_PW
 } = process.env;
 
@@ -196,29 +196,50 @@ function findAllRelevantContent(msg) {
     return { ...item, score };
   });
 
-  return scored.filter(i => i.score >= 5).sort((a, b) => b.score - a.score).slice(0, 5);
+   return scored
+   .filter(i => i.score >= 12)
+   .sort((a, b) => b.score - a.score)
+   .slice(0, 6);
 }
 
-// GPT 호출 (일반 질문용)
-async function getGPT3TurboResponse(input, context = []) {
-  if (context.length === 0) return "NO_CONTEXT"; 
+async function getLLMResponse(input, context = []) {
+  const txt = context.map(i => `Q: ${i.q}\nA: ${i.a}`).join("\n\n");
 
-  const contextText = context.map((i, idx) => `[정보 ${idx+1}] (출처: ${i.source})\nQ: ${i.q}\nA: ${i.a}`).join("\n\n");
-  const sys = `${currentSystemPrompt}\n\n[참고 정보]\n${contextText}`;
+  const system = `${currentSystemPrompt}
+
+[운영 규칙 - 매우 중요]
+- 답변은 반드시 아래 [참고 정보]에서 근거가 확인되는 내용만 안내하세요.
+- [참고 정보]에 없는 내용은 절대 추측하지 말고, "정확한 확인이 필요합니다"라고 말하세요.
+- 고객에게 추가 확인이 필요한 정보(주문번호/구매처/제품명 등)가 있으면 먼저 요청하세요.
+
+[참고 정보]
+${txt || "정보 없음."}`;
 
   try {
-    const res = await axios.post(OPEN_URL, {
-      model: FINETUNED_MODEL, 
-      messages: [
-          { role: "system", content: sys }, 
+    const res = await axios.post(
+      OPEN_URL,
+      {
+        model: FINETUNED_MODEL, // gpt-4o-mini 권장
+        temperature: 0.2,       // 추측/창작 억제
+        top_p: 0.9,
+        messages: [
+          { role: "system", content: system },
           { role: "user", content: input }
-      ], 
-      temperature: 0 
-    }, { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } });
-    
-    return res.data.choices[0].message.content;
-  } catch (e) { return "오류가 발생했습니다."; }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+    return res.data.choices?.[0]?.message?.content || "답변을 생성하지 못했습니다.";
+  } catch (e) {
+    return "답변 생성 중 문제가 발생했습니다.";
+  }
 }
+
 
 // 유틸 함수들
 function formatResponseText(text) { return text || ""; }
@@ -345,12 +366,14 @@ async function recommendProducts(userMsg, memberId) {
     `;
 
     try {
-        const gptRes = await axios.post(OPEN_URL, {
-            model: FINETUNED_MODEL,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.7
-        }, { headers: { Authorization: `Bearer ${API_KEY}` } });
-
+      const gptRes = await axios.post(OPEN_URL, {
+        model: FINETUNED_MODEL,
+        temperature: 0.5,
+        messages: [
+          { role: "system", content: "당신은 요기보 상담원입니다. 근거 없는 단정/과장 표현은 피하고, 제공된 정보 범위에서만 추천 멘트를 작성하세요." },
+          { role: "user", content: prompt }
+        ]
+      }, { headers: { Authorization: `Bearer ${API_KEY}` } });
         let answer = gptRes.data.choices[0].message.content;
         const buttons = top3.map(p => `<a href="${p.productUrl}" target="_blank" class="consult-btn" style="background:#58b5ca; color:#fff; display:inline-block; margin:5px; text-decoration:none;">🛍️ ${p.name} 보러가기</a>`).join("");
         return answer + "<br><br>" + buttons;
@@ -392,7 +415,8 @@ async function findAnswer(userInput, memberId) {
             } catch (e) { return { text: "조회 중 오류가 발생했습니다." }; }
         } return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
     }
-    const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
+    const isTracking = (
+      normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
     if (isTracking) {
         if (isUserLoggedIn(memberId)) {
           try {
@@ -418,32 +442,79 @@ async function saveConversationLog(mid, uMsg, bRes) {
         ); 
     } catch(e) { console.error(e); } finally { await client.close(); }
 }
-
 // ========== [메인 Chat] ==========
 app.post("/chat", async (req, res) => {
   const { message, memberId } = req.body;
   if (!message) return res.status(400).json({ error: "No message" });
 
   try {
-    // 1. 규칙 및 추천 확인
+    // 1) 규칙 및 추천 확인
     const ruleAnswer = await findAnswer(message, memberId);
     if (ruleAnswer) {
-       await saveConversationLog(memberId, message, ruleAnswer.text);
-       return res.json(ruleAnswer);
+      await saveConversationLog(memberId, message, ruleAnswer.text);
+      return res.json(ruleAnswer);
     }
 
-    // 2. 통합 데이터 검색 (5점 이상)
+    // 2) 통합 데이터 검색
     const docs = findAllRelevantContent(message);
-    
-    // 3. GPT 답변 생성 (검색 결과 없으면 차단)
-    let gptAnswer = docs.length === 0 ? FALLBACK_MESSAGE_HTML : await getGPT3TurboResponse(message, docs);
-    if (gptAnswer.includes("NO_CONTEXT")) gptAnswer = FALLBACK_MESSAGE_HTML;
+
+    // ✅ 3) 근거(문서) 없으면 LLM 호출 금지: 바로 핸드오프
+    if (!docs || docs.length === 0 || bestScore < 12) {
+      const fallback = `정확한 정보 확인이 필요합니다.${FALLBACK_MESSAGE_HTML}`;
+      await saveConversationLog(memberId, message, fallback);
+      return res.json({ text: fallback });
+    }
+
+    // ✅ 4) LLM 답변 생성 (4o-mini 권장 + temperature 낮춤)
+    let gptAnswer = await getLLMResponse(message, docs); // <- 함수명 교체
+    gptAnswer = formatResponseText(gptAnswer);
+
+    // ✅ 5) 혹시 모를 안전장치(모델이 NO_CONTEXT 등 반환 시)
+    if (gptAnswer.includes("NO_CONTEXT")) {
+      const fallback = `정확한 정보 확인이 필요합니다.${FALLBACK_MESSAGE_HTML}`;
+      await saveConversationLog(memberId, message, fallback);
+      return res.json({ text: fallback });
+    }
 
     await saveConversationLog(memberId, message, gptAnswer);
-    res.json({ text: gptAnswer });
+    return res.json({ text: gptAnswer });
 
-  } catch (e) { console.error(e); res.status(500).json({ text: "오류가 발생했습니다." }); }
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ text: "오류가 발생했습니다." });
+  }
 });
+
+
+function findRelevantContent(msg) {
+  const kws = msg.split(/\s+/).filter(w => w.length > 1);
+  if (!kws.length) return [];
+
+  const cleanMsg = msg.toLowerCase().replace(/\s+/g, "");
+  const scored = allSearchableData.map(item => {
+    let score = 0;
+    const q = (item.q || "").toLowerCase().replace(/\s+/g, "");
+    const a = (item.a || "").toLowerCase();
+
+    if (q.includes(cleanMsg) || cleanMsg.includes(q)) score += 30;
+
+    kws.forEach(w => {
+      const cw = w.toLowerCase();
+      if ((item.q || "").toLowerCase().includes(cw)) score += 8;
+      if (a.includes(cw)) score += 1;
+    });
+
+    return { ...item, score };
+  });
+
+  // ✅ 임계값 상향: 약한 매칭 제거
+  return scored
+    .filter(i => i.score >= 12)     // 기존 5 → 12
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);                   // top3 → top6
+}
+
+
 
 // ========== [파일 및 데이터 관리 API] ==========
 

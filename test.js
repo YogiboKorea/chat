@@ -24,9 +24,9 @@ const {
   FINETUNED_MODEL = "gpt-3.5-turbo", CAFE24_API_VERSION = "2024-06-01",
   PORT = 5000,
   SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS,
-  FTP_HOST = 'yogibo.ftp.cafe24.com',
-  FTP_USER = 'yogibo',
-  FTP_PASS = 'korea2025!!',
+  FTP_HOST ,
+  FTP_USER ,
+  FTP_PASS ,
   FTP_PUBLIC_BASE
 } = process.env;
 
@@ -253,7 +253,7 @@ async function findAnswer(userInput, memberId) {
   }
 
   const isTracking = (normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
-  const isFAQ = normalized.includes("비용") || normalized.includes("비") || normalized.includes("주소") || normalized.includes("변경");
+  const isFAQ = normalized.includes("비용") || normalized.includes("주소") || normalized.includes("변경");
   if (isTracking && !isFAQ && !containsOrderNumber(normalized)) {
     if (isUserLoggedIn(memberId)) {
       try {
@@ -681,3 +681,4 @@ app.get('/api/:_any/analytics/:pageId/product-clicks', async (req, res) => { res
     app.listen(PORT, () => console.log(`🚀 실행 완료: ${PORT}`));
   } catch (err) { console.error("❌ 초기화 오류:", err.message); process.exit(1); }
 })();
+
