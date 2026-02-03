@@ -404,6 +404,14 @@ async function recommendProducts(userMsg, memberId) {
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
+    const normalizedNoSpace = normalized.replace(/\s+/g, "");
+    if (
+      counselorTriggers.some(t => normalized.includes(t)) ||
+      counselorTriggers.some(t => normalizedNoSpace.includes(t.replace(/\s+/g, "")))
+    ) {
+      return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+    }
+
       // ✅ 상담사 버튼만 (직접 요청 시)
       const COUNSELOR_BUTTONS_ONLY_HTML = `
       <div class="consult-container" style="padding-top:0;">
@@ -429,15 +437,17 @@ async function findAnswer(userInput, memberId) {
         return { text: recommendResult };
     }
 
-    if (
-      normalized.includes("상담사 연결") ||
-      normalized.includes("상담원 연결") ||
-      normalized === "상담사" ||
-      normalized === "상담원"
-    ) {
-      return { text: COUNSELOR_BUTTONS_ONLY_HTML};
-    }
+        const counselorTriggers = [
+          "상담사", "상담원",
+          "상담사 연결", "상담원 연결",
+          "사람 상담", "직원 연결",
+          "카톡 상담", "카카오 상담",
+          "네이버 상담", "톡톡 상담"
+        ];
 
+        if (counselorTriggers.some(t => normalized.includes(t))) {
+          return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+        }
     // 5. 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
