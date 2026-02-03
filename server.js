@@ -399,24 +399,8 @@ async function recommendProducts(userMsg, memberId) {
     } catch (e) { return "추천 상품을 불러오는 중 오류가 발생했습니다."; }
 }
 
-// ========== [규칙 기반 답변 & 추천 라우팅] ==========
-async function findAnswer(userInput, memberId) {
-  const normalized = normalizeSentence(userInput);
 
-  // 1️⃣ 상담사 연결 요청 → 버튼만 반환
-  if (counselorTriggers.some(t => normalized.includes(t))) {
-    return { text: COUNSELOR_BUTTONS_ONLY_HTML };
-  }
-
-  // 2️⃣ ★ 추천 질문 감지
-  const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
-  if (recommendKeywords.some(k => normalized.includes(k))) {
-    const recommendResult = await recommendProducts(userInput, memberId);
-    return { text: recommendResult };
-  }
-
-
-  // ================= 상담사 연결 (전역 상수) =================
+// ================= 상담사 연결 (전역 상수) =================
 
 // 상담사 버튼만 표시하는 HTML
 const COUNSELOR_BUTTONS_ONLY_HTML = `
@@ -444,6 +428,23 @@ const counselorTriggers = [
   "네이버 상담", "톡톡 상담"
 ];
 
+
+
+// ========== [규칙 기반 답변 & 추천 라우팅] ==========
+async function findAnswer(userInput, memberId) {
+  const normalized = normalizeSentence(userInput);
+
+  // 1️⃣ 상담사 연결 요청 → 버튼만 반환
+  if (counselorTriggers.some(t => normalized.includes(t))) {
+    return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+  }
+
+  // 2️⃣ ★ 추천 질문 감지
+  const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
+  if (recommendKeywords.some(k => normalized.includes(k))) {
+    const recommendResult = await recommendProducts(userInput, memberId);
+    return { text: recommendResult };
+  }
 
   // 3️⃣ 주문번호 직접 입력 배송 조회
   if (containsOrderNumber(normalized)) {
@@ -488,8 +489,6 @@ const counselorTriggers = [
 
   return null;
 }
-
-
 
 
 
