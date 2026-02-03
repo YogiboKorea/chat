@@ -399,15 +399,28 @@ async function recommendProducts(userMsg, memberId) {
     } catch (e) { return "추천 상품을 불러오는 중 오류가 발생했습니다."; }
 }
 
+
 // ========== [규칙 기반 답변 & 추천 라우팅] ==========
 async function findAnswer(userInput, memberId) {
     const normalized = normalizeSentence(userInput);
     
-    // 1. 금지어 필터
-    const blockKeywords = ["파이썬", "코딩", "주식", "비트코인", "날씨", "정치"];
-    for (let badWord of blockKeywords) {
-        if (normalized.includes(badWord)) return { text: "죄송합니다. 요기보 제품과 관련된 질문만 답변 가능합니다. 😅" };
-    }
+      // ✅ 상담사 버튼만 (직접 요청 시)
+      const COUNSELOR_BUTTONS_ONLY_HTML = `
+      <div class="consult-container" style="padding-top:0;">
+        <a href="javascript:void(0)"
+          onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');"
+          class="consult-btn kakao">
+          <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
+        </a>
+
+        <a href="javascript:void(0)"
+          onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');"
+          class="consult-btn naver">
+          <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
+        </a>
+      </div>
+      `;
+
 
     // 2. ★ 추천 질문 감지 ("추천", "뭐가 좋아", "골라줘")
     const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
@@ -416,8 +429,14 @@ async function findAnswer(userInput, memberId) {
         return { text: recommendResult };
     }
 
-    // 3. 상담사 연결
-    if (normalized.includes("상담사") || normalized.includes("상담원")) return { text: `상담사를 연결해 드릴까요?${COUNSELOR_LINKS_HTML}` };
+    if (
+      normalized.includes("상담사 연결") ||
+      normalized.includes("상담원 연결") ||
+      normalized === "상담사" ||
+      normalized === "상담원"
+    ) {
+      return { text: COUNSELOR_BUTTONS_ONLY_HTML};
+    }
 
     // 5. 배송 조회
     if (containsOrderNumber(normalized)) {
