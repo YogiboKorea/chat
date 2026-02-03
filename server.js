@@ -405,6 +405,9 @@ async function recommendProducts(userMsg, memberId) {
 // 상담사 버튼만 표시하는 HTML
 const COUNSELOR_BUTTONS_ONLY_HTML = `
 <div class="consult-container">
+    <p style="font-weight:bold; margin-bottom:8px; font-size:14px; color:#e74c3c;">
+    <i class="fa-solid fa-triangle-exclamation"></i> 상담사 연결을 진행하겠습니다.
+  </p>
   <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
   </a>
