@@ -467,13 +467,15 @@ app.post("/chat", async (req, res) => {
     // 2) 통합 데이터 검색
     const docs = findAllRelevantContent(message);
 
+    const bestScore = docs.length > 0 ? docs[0].score : 0;
+
     // ✅ 3) 근거(문서) 없으면 LLM 호출 금지: 바로 핸드오프
     if (!docs || docs.length === 0 || bestScore < 12) {
       const fallback = `정확한 정보 확인이 필요합니다.${FALLBACK_MESSAGE_HTML}`;
       await saveConversationLog(memberId, message, fallback);
       return res.json({ text: fallback });
     }
-
+    
     // ✅ 4) LLM 답변 생성 (4o-mini 권장 + temperature 낮춤)
     let gptAnswer = await getLLMResponse(message, docs); // <- 함수명 교체
     gptAnswer = formatResponseText(gptAnswer);
