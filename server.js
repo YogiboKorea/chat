@@ -404,16 +404,11 @@ async function recommendProducts(userMsg, memberId) {
 
 // 상담사 버튼만 표시하는 HTML
 const COUNSELOR_BUTTONS_ONLY_HTML = `
-<div class="consult-container" style="padding-top:0;">
-  <a href="javascript:void(0)"
-     onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');"
-     class="consult-btn kakao">
+<div class="consult-container">
+  <a href="javascript:void(0)" onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');" class="consult-btn kakao">
      <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
   </a>
-
-  <a href="javascript:void(0)"
-     onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');"
-     class="consult-btn naver">
+  <a href="javascript:void(0)" onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');" class="consult-btn naver">
      <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
   </a>
 </div>
