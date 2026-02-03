@@ -44,14 +44,24 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) fs.mkdirSync(path.join(__di
 
 // ✅ 상품 데이터 (추천 시스템용 하드코딩 데이터)
 const yogiboProducts = [
-    { id: "max", name: "요기보 맥스", category: "소파", price: 389000, features: ["2인용", "침대대용", "눕기"], useCase: ["TV", "낮잠", "게임"], productUrl: "https://yogibo.kr/product/detail.html?product_no=123" },
-    { id: "midi", name: "요기보 미디", category: "소파", price: 299000, features: ["1인용", "원룸", "가성비"], useCase: ["독서", "휴식", "게임"], productUrl: "https://yogibo.kr/product/detail.html?product_no=124" },
-    { id: "mini", name: "요기보 미니", category: "소파", price: 229000, features: ["1인용", "소형", "아이들"], useCase: ["보조의자", "아이방"], productUrl: "https://yogibo.kr/product/detail.html?product_no=125" },
-    { id: "support", name: "요기보 서포트", category: "악세서리", price: 159000, features: ["등받이", "팔걸이", "수유쿠션"], useCase: ["소파보조", "독서", "수유"], productUrl: "https://yogibo.kr/product/detail.html?product_no=126" },
-    { id: "roll", name: "요기보 롤 맥스", category: "악세서리", price: 169000, features: ["바디필로우", "긴베개"], useCase: ["수면", "등받이"], productUrl: "https://yogibo.kr/product/detail.html?product_no=127" },
-    { id: "lounger", name: "요기보 라운저", category: "소파", price: 269000, features: ["1인용", "등받이형", "게임"], useCase: ["게임", "영화"], productUrl: "https://yogibo.kr/product/detail.html?product_no=128" },
-    { id: "shorty", name: "요기보 쇼티", category: "소파", price: 199000, features: ["1인용", "슬림", "공간절약"], useCase: ["원룸", "휴식"], productUrl: "https://yogibo.kr/product/detail.html?product_no=129" },
-    { id: "pod", name: "요기보 팟", category: "소파", price: 289000, features: ["1인용", "물방울", "감싸는"], useCase: ["독서", "명상"], productUrl: "https://yogibo.kr/product/detail.html?product_no=130" }
+    { id: "max", name: "요기보 맥스", category: "소파", price: 389000, features: ["2인용", "침대대용", "눕기"], 
+      useCase: ["TV", "낮잠", "게임"], productUrl: "/product/요기보-맥스/39/category/427/display/1/" },
+    { id: "midi", name: "요기보 미디", category: "소파", price: 329000, features: ["1인용", "원룸", "가성비"], 
+      useCase: ["독서", "휴식", "게임"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%EB%AF%B8%EB%8B%88/54/category/507/display/1/" },
+    { id: "mini", name: "요기보 미니", category: "소파", price: 229000, features: ["1인용", "소형", "아이들"],
+       useCase: ["보조의자", "아이방"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%EC%84%9C%ED%8F%AC%ED%8A%B8/83/category/427/display/1/" },
+    { id: "support", name: "요기보 서포트", category: "악세서리", price: 179000, features: ["등받이", "팔걸이", "수유쿠션"], 
+      useCase: ["소파보조", "독서", "수유"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%EB%A1%A4-%EB%A7%A5%EC%8A%A4/89/category/507/display/1/" },
+    { id: "roll", name: "요기보 롤 맥스", category: "악세서리", price: 199000, features: ["바디필로우", "긴베개"], 
+      useCase: ["수면", "등받이"], productUrl: "https://yogibo.kr/product/detail.html?product_no=127" },
+    { id: "lounger", name: "요기보 라운저", category: "소파", price: 269000, features: ["1인용", "등받이형", "게임"],
+       useCase: ["게임", "영화"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%EB%9D%BC%EC%9A%B4%EC%A0%80/464/category/427/display/1/" },
+    { id: "shorty", name: "요기보 슬림", category: "소파", price: 319000, features: ["1인용", "슬림", "공간절약"], 
+      useCase: ["원룸", "휴식"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%EC%8A%AC%EB%A6%BC/450/category/427/display/1/" },
+    { id: "pod", name: "요기보 팟", category: "소파", price: 329000, features: ["1인용", "물방울", "감싸는"], 
+      useCase: ["독서", "명상"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%ED%8C%9F/67/category/427/display/1/ "},
+      { id: "pyramid", name: "요기보 피라미드", category: "소파", price: 169000, features: ["1인용", "어린이", "아이들"], 
+        useCase: ["독서", "명상"], productUrl: "https://yogibo.kr/product/%EC%9A%94%EA%B8%B0%EB%B3%B4-%ED%94%BC%EB%9D%BC%EB%AF%B8%EB%93%9C/70/category/427/display/1/ "},      
 ];
 
 // ✅ 전역 변수
@@ -475,7 +485,7 @@ app.post("/chat", async (req, res) => {
       await saveConversationLog(memberId, message, fallback);
       return res.json({ text: fallback });
     }
-    
+
     // ✅ 4) LLM 답변 생성 (4o-mini 권장 + temperature 낮춤)
     let gptAnswer = await getLLMResponse(message, docs); // <- 함수명 교체
     gptAnswer = formatResponseText(gptAnswer);
