@@ -419,11 +419,6 @@ async function findAnswer(userInput, memberId) {
     // 3. 상담사 연결
     if (normalized.includes("상담사") || normalized.includes("상담원")) return { text: `상담사를 연결해 드릴까요?${COUNSELOR_LINKS_HTML}` };
 
-    // 4. 충전 = 비즈 리필
-    if (normalized.includes("충전")) {
-        return { text: `혹시 <b>배터리 충전</b>을 생각하셨나요? 😅<br>요기보는 전자기기가 아닙니다! <b>'충전'</b>은 푹 꺼진 소파에 <b>'비즈(충전재)'</b>를 채워넣는 것을 의미해요.<br><a href="https://yogibo.kr/category/%EB%A6%AC%ED%95%84%EB%B9%84%EC%A6%88/47/" target="_blank">[비즈 구매 바로가기]</a>` };
-    }
-
     // 5. 배송 조회
     if (containsOrderNumber(normalized)) {
         if (isUserLoggedIn(memberId)) {
