@@ -399,79 +399,76 @@ async function recommendProducts(userMsg, memberId) {
     } catch (e) { return "추천 상품을 불러오는 중 오류가 발생했습니다."; }
 }
 
-
 // ========== [규칙 기반 답변 & 추천 라우팅] ==========
 async function findAnswer(userInput, memberId) {
-    const normalized = normalizeSentence(userInput);
-    
-    const normalizedNoSpace = normalized.replace(/\s+/g, "");
-    if (
-      counselorTriggers.some(t => normalized.includes(t)) ||
-      counselorTriggers.some(t => normalizedNoSpace.includes(t.replace(/\s+/g, "")))
-    ) {
-      return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+  const normalized = normalizeSentence(userInput);
+  const normalizedNoSpace = normalized.replace(/\s+/g, "");
+
+  // 1️⃣ 상담사 연결 요청 → 버튼만 노출
+  if (
+    counselorTriggers.some(t => normalized.includes(t)) ||
+    counselorTriggers.some(t => normalizedNoSpace.includes(t.replace(/\s+/g, "")))
+  ) {
+    return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+  }
+
+  // 2️⃣ 금지어 필터
+  const blockKeywords = ["파이썬", "코딩", "주식", "비트코인", "날씨", "정치"];
+  for (let badWord of blockKeywords) {
+    if (normalized.includes(badWord)) {
+      return { text: "죄송합니다. 요기보 제품과 관련된 질문만 답변 가능합니다. 😅" };
     }
+  }
 
-      // ✅ 상담사 버튼만 (직접 요청 시)
-      const COUNSELOR_BUTTONS_ONLY_HTML = `
-      <div class="consult-container" style="padding-top:0;">
-        <a href="javascript:void(0)"
-          onclick="window.open('http://pf.kakao.com/_lxmZsxj/chat','kakao','width=500,height=600,scrollbars=yes');"
-          class="consult-btn kakao">
-          <i class="fa-solid fa-comment"></i> 카카오톡 상담원으로 연결
-        </a>
+  // 3️⃣ 추천 질문
+  const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
+  if (recommendKeywords.some(k => normalized.includes(k))) {
+    const recommendResult = await recommendProducts(userInput, memberId);
+    return { text: recommendResult };
+  }
 
-        <a href="javascript:void(0)"
-          onclick="window.open('https://talk.naver.com/ct/wc4u67?frm=psf','naver','width=500,height=600,scrollbars=yes');"
-          class="consult-btn naver">
-          <i class="fa-solid fa-comments"></i> 네이버 톡톡 상담원으로 연결
-        </a>
-      </div>
-      `;
-
-
-    // 2. ★ 추천 질문 감지 ("추천", "뭐가 좋아", "골라줘")
-    const recommendKeywords = ["추천", "뭐가 좋", "어떤게 좋", "골라", "선택", "뭐 사"];
-    if (recommendKeywords.some(k => normalized.includes(k))) {
-        const recommendResult = await recommendProducts(userInput, memberId);
-        return { text: recommendResult };
-    }
-
-        const counselorTriggers = [
-          "상담사", "상담원",
-          "상담사 연결", "상담원 연결",
-          "사람 상담", "직원 연결",
-          "카톡 상담", "카카오 상담",
-          "네이버 상담", "톡톡 상담"
-        ];
-
-        if (counselorTriggers.some(t => normalized.includes(t))) {
-          return { text: COUNSELOR_BUTTONS_ONLY_HTML };
+  // 4️⃣ 배송 조회 (주문번호 직접 입력)
+  if (containsOrderNumber(normalized)) {
+    if (isUserLoggedIn(memberId)) {
+      try {
+        const orderId = normalized.match(/\d{8}-\d{7}/)[0];
+        const ship = await getShipmentDetail(orderId);
+        if (ship) {
+          return {
+            text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.`
+          };
         }
-    // 5. 배송 조회
-    if (containsOrderNumber(normalized)) {
-        if (isUserLoggedIn(memberId)) {
-            try {
-                const orderId = normalized.match(/\d{8}-\d{7}/)[0]; const ship = await getShipmentDetail(orderId);
-                if (ship) return { text: `주문번호 <strong>${orderId}</strong>의 배송 상태는 <strong>${ship.status || "배송 준비중"}</strong>입니다.` };
-                return { text: "해당 주문번호의 정보를 찾을 수 없습니다." };
-            } catch (e) { return { text: "조회 중 오류가 발생했습니다." }; }
-        } return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+        return { text: "해당 주문번호의 정보를 찾을 수 없습니다." };
+      } catch (e) {
+        return { text: "조회 중 오류가 발생했습니다." };
+      }
     }
-    const isTracking = (
-      normalized.includes("배송") || normalized.includes("주문")) && (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
-    if (isTracking) {
-        if (isUserLoggedIn(memberId)) {
-          try {
-            const data = await getOrderShippingInfo(memberId);
-            if (data.orders?.[0]) return { text: `최근 주문(<strong>${data.orders[0].order_id}</strong>)을 확인했습니다.` };
-            return { text: "최근 주문 내역이 없습니다." };
-          } catch (e) { return { text: "조회 실패." }; }
-        } return { text: `배송정보 확인을 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
-    }
+    return { text: `조회를 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+  }
 
-    return null;
+  // 5️⃣ 배송 상태 질문
+  const isTracking =
+    (normalized.includes("배송") || normalized.includes("주문")) &&
+    (normalized.includes("조회") || normalized.includes("확인") || normalized.includes("언제") || normalized.includes("어디"));
+
+  if (isTracking) {
+    if (isUserLoggedIn(memberId)) {
+      try {
+        const data = await getOrderShippingInfo(memberId);
+        if (data.orders?.[0]) {
+          return { text: `최근 주문(<strong>${data.orders[0].order_id}</strong>)을 확인했습니다.` };
+        }
+        return { text: "최근 주문 내역이 없습니다." };
+      } catch (e) {
+        return { text: "조회 실패." };
+      }
+    }
+    return { text: `배송정보 확인을 위해 로그인이 필요합니다.${LOGIN_BTN_HTML}` };
+  }
+
+  return null;
 }
+
 
 // 대화 로그 저장
 async function saveConversationLog(mid, uMsg, bRes) {
